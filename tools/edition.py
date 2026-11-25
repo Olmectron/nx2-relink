@@ -11,4 +11,4 @@ of the card a port's files go in.
 """
 EDITION = 'switch2'
 TOOL = {'switch': 'nx-relink', 'switch2': 'nx2-relink', 'dev': 'nx2-recomp'}[EDITION]
-VERSION = '0.1.8'
+VERSION = '0.1.9'

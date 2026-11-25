@@ -111,7 +111,7 @@ static const char *session_name(u32 h) {
 // (the sessions the port answers for: the file system's, the applet's, add-on content's, and sm: itself)
 static int session_kept(const char *n) {
     return (n[0] == 'f' && n[1] == 's' && n[2] == 'p') || (n[0] == 'a' && n[1] == 'p' && n[2] == 'p') || (n[0] == 'a' && n[1] == 'o' && n[2] == 'c') ||
-           (n[0] == 's' && n[1] == 'm' && n[2] == ':');
+           (n[0] == 's' && n[1] == 'm' && n[2] == ':') || n[0] == '~';
 }
 static void session_forget(u32 h) {  // the handle is being closed: its number may be another session's next
     sessions_take();
@@ -302,6 +302,212 @@ static int applet_ipc(u8 *m, u32 *h, u32 type, u32 cmd) {
 #endif
 
 // SendSyncRequest: made here, so the answer is seen too
+// ---------------------------------------------------------------- a service the started-over title may not open: stood in for
+// Which services a program may open is its own description's to say, and a port is the title it was started over: a game that
+// opens one that title may not is refused (0x1015) and its SDK ends the program, however little the game needs the service (one
+// ended at its start for the service that streams the game to another console; report, 2026-11-25). Where the whole family of
+// the service is closed to the title (an SDK asks for the fuller forms of a service first and settles for a plainer one: that is
+// no refusal to act on), the game is given a session of the port's own, on which every request is answered "done" with nothing
+// in the answer: no network, no figures read, no friends. What the game does with the service doesn't work; the game goes on.
+// Not for the services a game can't run without (the graphics processor's, the display's, the controllers', its files): there
+// the refusal stands, and the report says so.
+static int starts(const char *n, const char *with);
+char nx2_ipcbytes[12];  // (<folder>/ipcbytes: a service's name, or its beginning: the bytes of what is asked of it and answered are logged)
+static u32 bytes_budget = 80;
+#ifdef __SWITCH2__
+static void bytes_said(const char *what, const u8 *m);
+#else
+static void bytes_said(const char *what, const u8 *m) { (void)what, (void)m; }  // (a Switch 2 port's: nothing is refused on a Switch)
+#endif
+static int bytes_wanted(const char *who) {
+    if (!nx2_ipcbytes[0]) return 0;
+    const char *n = who[0] == '~' ? who + 3 : who;
+    return starts(n, nx2_ipcbytes) && __atomic_fetch_sub(&bytes_budget, 1, __ATOMIC_RELAXED) - 1 < 80;
+}
+char nx2_refuse[200];  // (<folder>/refuse: services to treat as refused, names with spaces between. A try, to see a stand-in at work.)
+enum { STOOD = 24 };
+static struct {
+    char name[9];
+    u8 calls[256];  // how often each command was answered (its low byte): the first few answers carry handles, see below
+} stood[STOOD];
+static u32 stood_count, stood_objects;
+static void put32(u8 *p, u32 v) { p[0] = (u8)v, p[1] = (u8)(v >> 8), p[2] = (u8)(v >> 16), p[3] = (u8)(v >> 24); }
+static int starts(const char *n, const char *with) {
+    for (; *with; n++, with++)
+        if (*n != *with) return 0;
+    return 1;
+}
+static int listed(const char *list, const char *name) {
+    for (const char *c = list; *c;) {
+        while (*c == ' ' || *c == '\n' || *c == '\r') c++;
+        u32 k = 0;
+        while (c[k] && c[k] != ' ' && c[k] != '\n' && c[k] != '\r') k++;
+        u32 same = k > 0;
+        for (u32 i = 0; i < k && same; i++) same = name[i] == c[i];
+        if (same && !name[k]) return 1;
+        c += k;
+    }
+    return 0;
+}
+// (the ones no stand-in is of use for: with nothing behind them there is no picture, no pad, no file)
+static int never_stood(const char *n) {
+    static const char *const core[] = {"nv", "vi:", "dispdrv", "gsv", "hid", "fsp", "applet", "aud", "ldr", "sm:", "lm", "apm", "set", "time", "pl:"};
+    for (u32 k = 0; k < sizeof core / sizeof *core; k++)
+        if (starts(n, core[k])) return 1;
+    return 0;
+}
+// A handle that stands for a session of the port's, or for an event that never comes: a number of the port's own, which the
+// kernel never sees (it has a bit set that no handle of the kernel's has). A program of this kind is let make no handle that
+// would do: an event's has the kernel end it (2168-0008, "a system call the kernel didn't allow"), and of the stretches of
+// memory handed over to nobody ("transfer memory") it may have a dozen at a time; both seen on a console, 2026-11-25. So what the
+// game's SDK does with such a handle is answered here: a request on it (above), closing it, waiting on it (nx2_svc, below).
+#define STOOD_HANDLE(h) (((u32)(h) & 0xF0000000u) == 0x40000000u)
+static u32 stood_handles;
+static u32 stood_handle(void) { return 0x40000000u | (1 + (__atomic_fetch_add(&stood_handles, 1, __ATOMIC_RELAXED) & 0x0FFFFFFFu)); }
+static void stood_set(u32 h, int domain, u32 index, const char *service) {
+    char name[16] = {'~', domain == 2 ? 's' : domain ? 'd' : 'n', (char)('A' + index)};  // (2: a session one of these handed back)
+    u32 n = 3;
+    for (; *service && n < 12; service++) name[n++] = *service;
+    name[n] = 0;
+    session_set(h, name, NULL, ~0u);
+}
+// Where "done, with nothing" is the wrong answer, by the service: what its own answer is when it has nothing to give.
+//   bcat (data sent to a game from the network): a file or a folder of it asked for by name isn't there, said with the result
+//   the system's own service gives on a console that has none (147a; seen, 2026-11-25). Told "done", a game went on to read the
+//   file, got nothing, and ended in what it took for the file's contents.
+static u32 stood_result(const char *service, int first, u32 in_bytes, int reads) {
+    if (starts(service, "bcat") && !first && in_bytes >= 0x40 && !reads) return 0x147a;
+    return 0;
+}
+// The services that hand back numbers and never an object, and what their numbers are when there is nothing behind them:
+//   bsd (sockets): its answers are a call's own result and an error number. What needs no network is "done": registering the
+//   program and its watch (0, 0: what the system's own service answers; seen, 2026-11-25), an event to wake a waiting thread with
+//   (a number of its own, as a file's; written to, it takes the eight bytes; read, it has nothing yet), a wait for something to
+//   arrive (nothing does: it comes back after a moment, as one that ran out of time), closing, and the settings of a socket.
+//   Everything that would reach the network is "failed, the network is down" (-1 and 50), which a game with no network is made
+//   to take. Told "done" with an object's number where the error number goes, a game took its sockets for broken and ended itself
+//   (81b); told the network was down when it asked for the event, its own network code ended it (abort).
+//   sfdnsres (names looked up): "no such host" (1).   nsd: nothing.
+static int stood_plain(const char *service, u32 cmd, u32 *out0, u32 *out1) {
+    *out0 = *out1 = 0;
+    if (starts(service, "bsd")) {
+        static u32 events;
+        switch (cmd) {
+        case 0: case 1: case 28: case 32: case 33: case 36:  // the program registered, its watch, its statistics
+        case 19: case 20: case 21: case 22: case 23: case 26:  // a socket's settings, shut, closed
+            break;
+        case 31: *out0 = 100 + (__atomic_fetch_add(&events, 1, __ATOMIC_RELAXED) & 0xFFF); break;  // an event's own number
+        case 24: *out0 = 8; break;                                                                // written to
+        case 25: *out0 = 0xFFFFFFFFu, *out1 = 35; break;                                          // read: nothing there yet
+        case 5: case 6: svcSleepThread(20000000); break;                                          // waited on: nothing arrived
+        default: *out0 = 0xFFFFFFFFu, *out1 = 50;                                                 // the network is down
+        }
+        return 1;
+    }
+    if (starts(service, "sfdnsres")) {
+        *out0 = 1;
+        return 1;
+    }
+    return starts(service, "nsd");
+}
+// a request on such a session, answered here
+static void stood_answer(u64 *r, u8 *m, u32 h, const char *who) {
+    const u32 type = rd32(m) & 0xFFFF, index = (u32)(who[2] - 'A') % STOOD;
+    const int domain = who[1] == 'd', control = type == 5 || type == 7;
+    const u8 *q = payload(m, "SFCI");
+    const u32 cmd = q ? rd32(q + 8) : ~0u;
+    if (type == 2) {  // the session is closed: what the kernel says of one
+        r[0] = 0xF601;
+        return;
+    }
+    // What an answer carries is the command's own to say, and here the command is unknown. A command that hands back a session,
+    // or an event to wait on, is asked once or a few times; one asked at every picture hands back numbers. So the first four
+    // answers to each command carry a handle of either kind (an SDK that expected none leaves them be), and the later ones none:
+    // the kernel has only so many handles to give.
+    u32 copy = 0, move = 0, word = 0, object = 0, result = 0, out0 = 0, out1 = 0;
+    const int plain = !control && stood_plain(who + 3, cmd, &out0, &out1);
+    if (control) {  // the session's own commands: become a domain; a copy of it; how large a buffer it takes
+        if (cmd == 0) word = 0x100, stood_set(h, 1, index, who + 3);
+        else if (cmd == 1 || cmd == 2 || cmd == 4) move = stood_handle();
+        // (how large a buffer the session takes in a message's own bytes: the most there can be. With the 128 bytes one of the
+        // system's services says, a game's SDK ended the program before sending a larger one: "pointer buffer too small", 11a0b)
+        else if (cmd == 3) word = 0xFFFF;
+    } else {
+        u8 *calls = &stood[index].calls[cmd & 255];
+        // (A request that brings a buffer to be filled is one that reads something: it is answered with nothing read, and no
+        // more. Given an object's number where it looks for how much was read, a game took its own empty buffer for a file's
+        // contents and ended in them; seen on a console, 2026-11-25.)
+        const u32 w0 = rd32(m), w1 = rd32(m + 4);
+        const int reads = (w0 >> 24 & 15) || (w0 >> 28 & 15) || (w1 >> 10 & 15);
+        // (is this the session sm: gave, or the object it became, and how much the request brings: in a domain both are in
+        // the eight bytes before "SFCI"'s sixteen)
+        const u8 *dom = domain && q && q - m >= 16 ? q - 16 : NULL;
+        const int first = dom ? rd32(dom + 4) == 0x100 : who[1] == 'n';
+        const u32 in_bytes = dom ? (u32)dom[2] | (u32)dom[3] << 8 : q ? (w1 & 0x3FF) * 4 - (u32)(q - m - 8) : 0;
+        result = stood_result(who + 3, first, in_bytes, reads);
+        // (In a domain a new object is a number, not a handle, and it comes after whatever else the answer has: right after
+        // the answer's header for a command that hands back an object and nothing else, as the ones that open an interface do
+        // (seen in the system's own answers). So that is where one is put, every time: a number costs nothing, and a game asks
+        // some of these commands once for each file it opens. A command that hands back a number instead reads it as that
+        // number: one whose low byte is 0, so that a yes-or-no is "no".)
+        if (domain && !reads && !result && !plain) object = 0x100 * (2 + (__atomic_fetch_add(&stood_objects, 1, __ATOMIC_RELAXED) & 0x3FFF));
+        if (*calls < 4 && !reads && !result && !plain) {
+            (*calls)++;
+            copy = stood_handle();
+            if (!domain) move = stood_handle();
+        }
+        static u32 said;
+        if (said++ < 60 && result) nx2_log("[ipc] the port's stand-in for \"%s\": command %d answered that there is none (%x)\n", stood[index].name, (s64)(s32)cmd, (u64)result);
+        else if (said <= 60) nx2_log("[ipc] the port's stand-in for \"%s\": command %d answered with nothing\n", stood[index].name, (s64)(s32)cmd);
+    }
+    if (move) stood_set(move, control ? domain : 2, index, who + 3);
+    for (u32 k = 0; k < 0x100; k++) m[k] = 0;
+    u32 o = 8;
+    if (copy || move) {
+        put32(m + 8, (copy ? 1u : 0) << 1 | (move ? 1u : 0) << 5);
+        o = 12;
+        if (copy) put32(m + o, copy), o += 4;
+        if (move) put32(m + o, move), o += 4;
+    }
+    u8 *d = m + ((o + 15) & ~15u);
+    if (domain && !control) put32(d, object ? 1 : 0), d += 16;  // (a domain's answer begins with how many objects it hands back)
+    put32(d, 0x4F434653), put32(d + 8, result), put32(d + 16, control ? word : plain ? out0 : object);  // "SFCO", the result; then the one number, or the new object's
+    if (plain) put32(d + 20, out1);
+    put32(m + 4, ((copy || move) ? 0x80000000u : 0) | (0xF0 - o) / 4);
+    r[0] = 0;
+}
+// Is any other form of the service given to the title? Asked of sm: itself with the game's own request, the name changed: a
+// session that is given is closed again at once.
+static int family_given(u8 *m, const u8 *asked, u32 sm, const char *name) {
+    static const char *const ends[] = {"", ":u", ":user", ":a", ":s", ":r", ":m", ":su", ":sc", ":c", ":e", ":app", ":u0", ":u1", ":sys", ":t", ":d"};
+    const u8 *q = payload(asked, "SFCI");
+    const u32 at = q ? (u32)(q - asked) + 16 : 8;
+    u32 stem = 0;
+    while (name[stem] && name[stem] != ':') stem++;
+    int given = 0;
+    for (u32 e = 0; e < sizeof ends / sizeof *ends && !given; e++) {
+        char other[9] = {0};
+        u32 n = 0;
+        for (; n < stem; n++) other[n] = name[n];
+        const char *end = ends[e];
+        for (; *end && n < 9; end++) other[n++] = *end;
+        if (n > 8) continue;
+        u32 same = 1;
+        for (u32 k = 0; k < 9 && same; k++) same = other[k] == name[k];
+        if (same) continue;
+        for (u32 k = 0; k < 0x100; k++) m[k] = asked[k];
+        for (u32 k = 0; k < 8; k++) m[at + k] = (u8)other[k];
+        if (R_FAILED(svcSendSyncRequest(sm))) continue;
+        const u32 got = answer_handle(m);
+        if (got) {
+            svcCloseHandle(got);
+            given = 1;
+            nx2_log("[ipc] sm: of that service's family, \"%s\" is given: the game's SDK is left to ask for it\n", other);
+        }
+    }
+    return given;
+}
+
 static void send_sync(u64 *r, const char *module, u64 off, int log) {
     u8 *m = tls();
     u32 h = (u32)r[0];
@@ -311,6 +517,13 @@ static void send_sync(u64 *r, const char *module, u64 off, int log) {
     char text[9] = {0};
     for (u32 k = 0; q && k < 8; k++) text[k] = (q[16 + k] >= 0x20 && q[16 + k] < 0x7F) ? (char)q[16 + k] : 0;
     const char *who = session_name(h);
+    if (who[0] == '~') {  // (a session of the port's own, in place of a service the started-over title may not open)
+        const int said = bytes_wanted(who);
+        if (said) nx2_log("[ipc] %s (handle %x), the port's own:\n", who, (u64)h), bytes_said("asked", m);
+        stood_answer(r, m, h, who);
+        if (said) bytes_said("answered here", m);
+        return;
+    }
     const int is_sm = who[0] == 's' && who[1] == 'm' && who[2] == ':';
     // A later SDK speaks to sm: in the system's newer, shorter form (TIPC: the command is in the message's type, 16 and up, and the
     // data follows the header at once, with no "SFCI"). Its request for a service is type 17, the name at the eighth byte. Not seen
@@ -410,7 +623,18 @@ static void send_sync(u64 *r, const char *module, u64 off, int log) {
         return;
     }
 #endif
-    const u32 rc = svcSendSyncRequest(h);
+    const int bytes = bytes_wanted(who);
+    if (bytes) nx2_log("[ipc] %s (handle %x) type %u command %d:\n", who, (u64)h, (u64)type, (s64)(s32)cmd), bytes_said("asked", m);
+    u8 asked[0x100];
+    const int asks_service = is_sm && cmd == 1, forced = asks_service && nx2_refuse[0] && listed(nx2_refuse, text);
+    for (u32 k = 0; asks_service && k < 0x100; k++) asked[k] = m[k];
+    const u32 rc = forced ? 0 : svcSendSyncRequest(h);
+    if (forced) {  // (<folder>/refuse: as if sm: had said "not allowed")
+        for (u32 k = 0; k < 0x100; k++) m[k] = 0;
+        if (q) put32(m + 4, 8), put32(m + 16, 0x4F434653), put32(m + 24, 0x1015);
+        else put32(m + 4, 1), put32(m + 8, 0x1015);
+    }
+    if (bytes) bytes_said("the system answered", m);
 #ifdef __SWITCH2__
     if (applet_watch) bytes_said("the system answered", m);
     // (the system's message that the program is to close, 4: the user closed the game. A run that ends after it is not one that
@@ -434,14 +658,38 @@ static void send_sync(u64 *r, const char *module, u64 off, int log) {
     }
 #endif
     const u8 *a = payload(m, "SFCO");
-    const u32 result = a ? rd32(a + 8) : 0, got = rc ? 0 : answer_handle(m);
+    u32 result = a ? rd32(a + 8) : 0, got = rc ? 0 : answer_handle(m);
     if (is_sm && cmd == 1 && !rc && !got) {
-        const u32 said = tipc && h == (u32)r[0] ? short_result(m) : result;
+        const u32 said = q ? result : short_result(m);
         if (said == 0x1015) {
-            for (u32 k = 0; k < 9; k++) refused_service[k] = text[k];
             // (said plainly and no louder: an SDK asks for the fuller forms of a service first and settles for the plain one, so
             // most of these are nothing; the one a game ends on is named in its report, below)
-            nx2_log("[ipc] sm: the service \"%s\" isn't given to the title this was started over (result 1015, not allowed)\n", text);
+            nx2_log("[ipc] sm: the service \"%s\" isn't given to the title this was started over (result 1015, not allowed)%s\n", text,
+                    forced ? ": made so by <folder>/refuse" : "");
+            u32 mine = 0;
+            u8 refusal[0x100];  // (sm:'s own answer, kept: the looks at the service's family write over it)
+            for (u32 k = 0; k < 0x100; k++) refusal[k] = m[k];
+            if (never_stood(text))
+                nx2_log("[ipc]   and the port can't stand in for that one: a game that needs it needs another game to be started over\n");
+            else if (stood_count < STOOD && (forced || !family_given(m, asked, h, text)) && (mine = stood_handle()) != 0) {
+                const u32 index = stood_count++;
+                for (u32 k = 0; k < 9; k++) stood[index].name[k] = text[k];
+                stood_set(mine, 0, index, text);
+                nx2_log("[ipc]   THE PORT STANDS IN FOR \"%s\": the game is given a session that answers every request with nothing. What the game "
+                        "does with that service won't work; the game itself goes on\n", text);
+            }
+            if (mine) {  // the answer sm: would have given, in the form the game's SDK asked in: a handle, and "done"
+                for (u32 k = 0; k < 0x100; k++) m[k] = 0;
+                put32(m + 8, 1u << 5), put32(m + 12, mine);
+                if (q) put32(m + 4, 0x80000000u | 8), put32(m + 16, 0x4F434653);
+                else put32(m + 4, 0x80000000u | 1);
+                result = 0, got = 0;  // (named above already: not to be named again as sm:'s own)
+            } else {
+                for (u32 k = 0; k < 9; k++) refused_service[k] = text[k];
+                // (the answer as sm: gave it, byte for byte. Written anew here, in the form it was thought to have, a later SDK
+                // read "done" and a handle of 0 in it, and ended on the handle; seen on a console, 2026-11-25.)
+                for (u32 k = 0; k < 0x100; k++) m[k] = refusal[k];
+            }
         } else if (said && tipc)
             nx2_log("[ipc] sm: the service \"%s\" isn't given: result %x\n", text, (u64)said);
     }
@@ -561,6 +809,25 @@ int nx2_svc(u64 *r, u32 n) {
                 seen == 2 && !verbose ? " (its later uses aren't logged)" : "");
     }
     if (n == 0x16) session_forget((u32)r[0]);  // CloseHandle
+    // (a handle of the port's own, standing for a service the started-over title may not open: closed, reset, waited on here)
+    if ((n == 0x16 || n == 0x17 || n == 0x12) && STOOD_HANDLE(r[0])) {
+        r[0] = 0;
+        return 1;
+    }
+    if (n == 0x18 && r[1] && r[2] >= 1 && r[2] <= 64) {  // WaitSynchronization(out index, handles, count, timeout)
+        const u32 *all = (const u32 *)r[1];
+        u32 real[64], place[64], count = 0, mine = 0;
+        for (u32 k = 0; k < (u32)r[2]; k++) {
+            if (STOOD_HANDLE(all[k])) mine++;
+            else real[count] = all[k], place[count++] = k;
+        }
+        if (mine) {  // the wait goes on for the kernel's own handles alone (with none, until its time is up): the port's never signal
+            s32 index = -1;
+            const u32 rc = svcWaitSynchronization(&index, real, (s32)count, r[3]);
+            r[0] = rc, r[1] = !rc && index >= 0 && (u32)index < count ? place[index] : (u64)(s64)index;
+            return 1;
+        }
+    }
     switch (n) {
 #ifdef __SWITCH2__
     case 0x18:  // WaitSynchronization(out index, handles, count, timeout): the applet's event, with the message above still to give
@@ -812,7 +1079,17 @@ int nx2_svc(u64 *r, u32 n) {
             } else if ((given & 0x1FF) == 2 && (given >> 9) >= 4000 && (given >> 9) < 5000)
                 nx2_crash("the game's SDK ended the program: it read the game's files and found them damaged (a file system result of the \"data is "
                           "corrupted\" kind). Install the port again, the game's files with it, and see that the card has room for them");
-            else
+            else if (refused_service[0] && never_stood(refused_service)) {
+                // (a service of the kind the port can't stand in for was refused earlier: said with the end, as what may be behind it)
+                const char *parts[3] = {"the game's SDK ended the program itself (an abort). Before it, the console refused the service \"", refused_service,
+                                        "\" to the game the homebrew menu was started over, and the port can't stand in for that one (graphics, display, "
+                                        "controllers, files): if this game needs it, start the homebrew menu over another game, one of the same kind"};
+                u32 n = 0;
+                for (int k = 0; k < 3; k++)
+                    for (const char *c = parts[k]; *c && n + 1 < sizeof why; c++) why[n++] = *c;
+                why[n] = 0;
+                nx2_crash(why);
+            } else
                 nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked for)");
         }
         nx2_exit();

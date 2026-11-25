@@ -40,7 +40,9 @@ void __libnx_initheap(void) {
     // put in it, and the rest is the kernel's again, to give the game as it asks (svc.c: its SetHeapSize makes the kernel's heap
     // larger, after the host's part; its MapPhysicalMemory is the kernel's own).
     {
-        u64 host = 256ull << 20;
+        // (128 MB, where it was 256: what the port takes of its own heap while a game runs is a few MB, and its table of a mods
+        // folder's files; the other half is the game's now, which a game that maps memory as it runs was short of)
+        u64 host = 128ull << 20;
         // (with the modules kept whole, whole.c, each one's image and bss are put together in the host's heap before the loader
         // service maps them: that much more is the host's. A game's seven are 190 MB, and with 256 MB in all the sixth had
         // none; log, 2026-11-25.)
@@ -294,6 +296,26 @@ int main(int argc, char **argv) {
         extern char nx2_trace[96];
         extern int nx2_trace_on;
         {
+            {  // (<folder>/ipcbytes: the bytes of what is asked of one service, and answered)
+                extern char nx2_ipcbytes[12];
+                FILE *b = fopen(NX2_DIR "ipcbytes", "rb");
+                if (b) {
+                    size_t n = fread(nx2_ipcbytes, 1, sizeof nx2_ipcbytes - 1, b);
+                    while (n && (nx2_ipcbytes[n - 1] == 10 || nx2_ipcbytes[n - 1] == 13 || nx2_ipcbytes[n - 1] == ' ')) n--;
+                    nx2_ipcbytes[n] = 0;
+                    fclose(b);
+                }
+            }
+            {  // (<folder>/refuse: services treated as refused, to see the port's stand-in for one at work)
+                extern char nx2_refuse[200];
+                FILE *refuse = fopen(NX2_DIR "refuse", "rb");
+                if (refuse) {
+                    const size_t n = fread(nx2_refuse, 1, sizeof nx2_refuse - 1, refuse);
+                    nx2_refuse[n] = 0;
+                    fclose(refuse);
+                    nx2_log("[nx2] <folder>/refuse is there: these services are treated as refused: %s\n", nx2_refuse);
+                }
+            }
             extern char nx2_slow[64];
             FILE *slow = fopen(NX2_DIR "slow", "rb");
             if (slow) {

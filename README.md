@@ -101,9 +101,20 @@ and loading a saved game), others to their title and first screens.
 > - its **system resource**: without any, a program can't map memory as it runs, which some games do from their start;
 > - the **system services** it may open.
 >
-> A port whose game needs more than the host game has ends at its start, or as it runs. **Start the homebrew menu over the
-> same game the port was made from, whenever you can**: it has exactly what the game needs. Otherwise try another game, a
-> large and recent one for choice.
+> **Services are stood in for.** When the console refuses the host game a service that the port's game asks for, and the
+> service is one a game can run without (the network and its sockets, online data, amiibo, friends, parental controls, play
+> reports and the like), the port answers in its place: every request is "done", with nothing in the answer, and the network
+> is "down". What the game does with that service won't work; the game itself goes on. `log.txt` has a line for each:
+> `THE PORT STANDS IN FOR "<service>"`. This only happens when a service is refused: with a host game that has it, the game
+> talks to the console's own.
+>
+> **What can't be stood in for:** the services of the graphics processor, the display, the controllers and the game's files,
+> and the two memory figures above. A port whose game needs one of those and whose host game lacks it ends at its start, or as
+> it runs, and its report says which. Games made with an older graphics path (some "Switch 2 Edition" releases) need a host
+> game of the same kind.
+>
+> **Start the homebrew menu over the same game the port was made from, whenever you can**: it has exactly what the game
+> needs. Otherwise try another game, a large and recent one for choice.
 >
 > `log.txt` (and so `crash.txt`) says near its start what the host game had and what the port's game was made for, and names
 > a service the console refused. The tool says the game's own figures when it builds a port.
@@ -290,7 +301,10 @@ more modules than fit won't run this way, and its log says so.
 - **Add-on content (DLC)** isn't installed.
 - **Host game.** To the system, the running application is the game the homebrew menu was started over, and what a program
   may have is that game's, not the port's: its memory for graphics, its system resource, the services it may open (see *What
-  you need*). Nothing in a port can give what the host game hasn't.
+  you need*). The port stands in for the services a game can run without; nothing in a port can give the rest.
+- **Memory.** A port keeps some 430 MB of the console's memory for itself (the game's program is held twice while it runs). A
+  game made to use every byte of its console maps less than it would there, and is refused memory at times: its log has
+  `MapPhysicalMemory ... REFUSED` lines. Some games take that in their stride; one that doesn't ends there.
 - **A fault leaves no place.** When the console closes a port for a fault, it hands the program nothing: `crash.txt` has the
   kind of fault, from the console's own record, and the log up to it, but not where it happened. A report made with the
   detailed log on (*Advanced options*) says much more.

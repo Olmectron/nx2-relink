@@ -96,7 +96,11 @@ enum { TEX_DISPLAY = 1, TEX_LINEAR = 0x10 };
 
 // (A game has thousands at once: with room for 4096, every one after those was refused, 5207 of them, and what was drawn
 // had no texture; log, 2026-11-23)
+#ifdef NX2_GAME_MB  // (a Switch 2 game: never used, see ARENA)
+#define TEXTURES 16
+#else
 #define TEXTURES 32768
+#endif
 typedef struct {
     int used, w, h, format, flags, window;
     int depth, levels, target;
@@ -168,7 +172,11 @@ static void jobs_wait(void) {
     while (async_on && jobs_done != jobs_pushed) svcSleepThread(50000);
 }
 // (A game makes more than a thousand at its start: with room for 1024 the rest were refused; a Switch 2, 2026-11-23)
+#ifdef NX2_GAME_MB  // (a Switch 2 game: never used, see ARENA)
+#define PROGRAMS 16
+#else
 #define PROGRAMS 16384
+#endif
 typedef struct {
     int used, state;  // state: 0 not built yet, 1 built, -1 failed
     const char *src[2];  // vertex, fragment: the GLSL the game compiled, copied
@@ -195,7 +203,11 @@ typedef struct {
 static Program programs[PROGRAMS];
 
 // the shader text, kept: the game's own copy may be freed after its compile
+#ifdef NX2_GAME_MB  // (a Switch 2 game: never used, see ARENA)
+static char text[1 << 12];
+#else
 static char text[8 << 20];
+#endif
 static u32 text_at;
 static const char *pending[2];  // the pair last compiled, for the program made next (the game does the two in one function)
 
@@ -1644,7 +1656,11 @@ static struct {
     u8 *texels;
 } writes[WRITES];
 static volatile int writes_busy;
+#ifdef NX2_GAME_MB  // (a Switch 2 game: never used, see ARENA)
+static u8 writes_room[1u << 12];
+#else
 static u8 writes_room[8u << 20];  // where the texels wait: begun again once none are waiting
+#endif
 static u32 writes_at;
 static void writes_take(void) {
     while (__atomic_exchange_n(&writes_busy, 1, __ATOMIC_ACQUIRE)) svcSleepThread(20000);

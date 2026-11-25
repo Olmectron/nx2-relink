@@ -1,5 +1,6 @@
 // The log: a ring any thread appends to without the C library (the game's threads have the console SDK's data where libnx keeps a
 // thread's own, so nothing of newlib's that looks there may run on them), and a thread of the port's that writes it to the card.
+#include <malloc.h>
 #include <switch.h>
 
 #include <stdarg.h>
@@ -170,12 +171,43 @@ static void crash_file(const char *why, const char *detail, const char *log_path
     fclose(out);
 }
 
+#ifdef __SWITCH2__
+// How the console is set, said when it changes: docked or handheld, and the "performance configuration" the system has the
+// program on (its processor's and its graphics processor's speeds). A game that is slow in one mode and not in the other, or
+// slow after its loading is over (a game has the processor sped up and the graphics processor slowed while it loads, and asks
+// for the usual again after), shows here. Asked from this thread, the port's own: every two seconds.
+static void mode_said(void) {
+    static int ready = -1, said;
+    static u32 mode_then = ~0u, now_then = ~0u;
+    if (ready < 0) ready = R_SUCCEEDED(apmInitialize());
+    if (!ready || said > 200) return;
+    ApmPerformanceMode mode = ApmPerformanceMode_Invalid;
+    u32 now = 0, normal = 0, boost = 0;
+    if (R_FAILED(apmGetPerformanceMode(&mode))) return;
+    if (R_FAILED(appletGetCurrentPerformanceConfiguration(&now))) now = 0;
+    if ((u32)mode == mode_then && now == now_then) return;
+    mode_then = (u32)mode, now_then = now, said++;
+    apmGetPerformanceConfiguration(ApmPerformanceMode_Normal, &normal);
+    apmGetPerformanceConfiguration(ApmPerformanceMode_Boost, &boost);
+    nx2_log("[nx2] the console is %s; the program's performance configuration is %x now (set for handheld: %x, for docked: %x)\n",
+            mode == ApmPerformanceMode_Boost ? "docked" : mode == ApmPerformanceMode_Normal ? "handheld" : "in a mode this doesn't know", (u64)now, (u64)normal,
+            (u64)boost);
+}
+#endif
+
 static void writer_main(void *arg) {
     (void)arg;
     int closed_said = 0;
-    for (;;) {
+    for (u32 round = 0;; round++) {
         svcSleepThread(waiting ? 500000 : 50000000);
         const int q = quit;
+#ifdef __SWITCH2__
+        // (every two seconds by the clock: the rounds of this loop are of no fixed length)
+        static u64 looked;
+        const u64 tick = armGetSystemTick();
+        const int due = !q && (!looked || armTicksToNs(tick - looked) >= 2000000000ull);
+        if (due) looked = tick, mode_said();
+#endif
         flush();
         if (crash_now) {
             crash_file(crash_why, NULL, NX2_DIR "log.txt");

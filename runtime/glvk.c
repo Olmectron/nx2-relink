@@ -189,7 +189,11 @@ typedef struct {
     int is3d, depth, attachable;
     VkImageLayout layout;
 } Image;
+#ifdef NX2_GAME_MB  // (a Switch 2 game draws with its own SDK: none of this is ever used; nvn2.c's ARENA has the story)
+#define TEXS 16
+#else
 #define TEXS 65536
+#endif
 typedef struct {
     int used;
     Image *im;
