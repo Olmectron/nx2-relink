@@ -1,7 +1,9 @@
-# nx-relink
+# nx2-relink
 
-Makes a **Nintendo Switch** game you own into a homebrew program (`.nro`) that runs it on a **Switch**: the game's own code,
+Makes a **Nintendo Switch 2** game you own into a homebrew program (`.nro`) that runs it on a **Switch 2**: the game's own code,
 relinked, not emulated.
+
+A fork of [nx-relink](https://github.com/Olmectron/nx-relink), which does the same for Switch games on a Switch.
 
 > [!CAUTION]
 > **Experimental software. Use it at your own risk.**
@@ -13,59 +15,78 @@ relinked, not emulated.
 > [!IMPORTANT]
 > **Use your own backups only.**
 > This project contains no games, no keys and no Nintendo files, and it won't get them for you. It works only with dumps of games
-> you own, made by you from your own console, and with your own console's keys. Nothing leaves your computer or your card, and the
-> tool never shows a key. Don't ask for game files or keys here, and don't post them: such issues are closed.
+> you own, made by you from your own console. Nothing leaves your computer or your card. Don't ask for game files here, and don't
+> post them: such issues are closed.
 
 > [!TIP]
 > **A game crashed or didn't start? There is a file for that.**
 > After a run that ended badly, the port writes **`crash.txt`** in its own folder of the SD card:
 >
-> **`/nx-relink/<name>/crash.txt`**  (`<name>` is the port's short name)
+> **`/nx2-relink/<name>/crash.txt`**  (`<name>` is the port's short name)
 >
-> It says what happened and has the end of that run's log. **Open an issue and attach that file** (and `log.txt`, beside it), with
-> the game's name and version: that is everything needed to look into it.
-> It is plain text you can read before sending, and has no keys, account or serial number in it.
+> It says what happened (with the console's own error code, when it gave one) and has the end of that run's log. **Open an issue
+> and attach that file** (and `log.txt`, beside it), with the game's name and version: that is everything needed to look into it.
+> It is plain text you can read before sending, and has no account or serial number in it.
 
 ## What it does
 
-A Switch game is already code for the Switch's processor. Nothing is translated: the game's modules go into the `.nro` as they are,
-and what surrounds them is replaced.
+A Switch 2 game is already code for the Switch 2's processor, and its own SDK already drives that console's display, graphics
+processor and sound. Nothing is translated: the game's modules run as they are, and what surrounds them is replaced.
 
 | Part of the game | What happens to it |
 |---|---|
-| Code (`main`, `sdk`, `subsdk*`) | Goes into the `.nro` unchanged, relinked |
+| Code (`main`, `sdk`, `subsdk*`) | Kept whole and mapped by the console's loader, or relinked into the `.nro` (the tool decides which, by the game) |
 | `rtld`, the console's loader | Replaced by the port's own |
 | System calls | Pass through the port first, which answers them or lets them through |
-| The game's files (RomFS) and DLC | Served from the SD card |
+| The game's files (RomFS) | Served from the SD card |
 | Saved data | A folder of the SD card |
-| Graphics, sound, input | The console's real drivers, as in the game itself |
+| Memory | Left to the console: the game takes it as it asks for it |
+| Graphics and sound | The game's own SDK, on the console's real drivers |
 
 ## Compatibility
 
-No list of games is kept here. Nothing in the tool is written for a particular game: it reads the game's own modules (`main`,
-`sdk`, `subsdk*`), relinks them, and stands in for the loader and the file system, while graphics, sound and input stay on the
-console's real drivers. So a game that was never tried has a fair chance.
+No list of games is kept here. This is an early release, and nothing in the tool is written for a particular game: what differs
+from one game to the next is read from the game itself, so a game that was never tried has a fair chance.
 
-**How it was tried.** Several commercial games, built with this tool and run on a console from their start into play:
+**How it was tried.** A few commercial Switch 2 games, from NUP dumps with their updates, built with this tool and run on a
+Switch 2 with **kaiHEN 20261117.1**: one from its menus through a new game, saving and loading a saved game; another to its
+title and first screens. Others build and haven't been on a console yet.
 
-- SDK versions from 4 to 16.
-- Both ways a game draws: NVN and OpenGL.
-- With and without an update, and with DLC.
+> [!NOTE]
+> **Compatibility has been tried with kaiHEN 20261117.1 only.** A port leans on things that are kaiHEN's own (its loader
+> service, the memory it leaves a program), which another version may do differently. If you use another version, say which in
+> your report.
 
-That was before release 0.1.0 moved a port's files to folders of their own; the present layout hasn't been through a console yet.
+**What is decided by the game, with nothing to set:**
 
-**Before building**, `python nxrelink.py check <game.nsp>` says what a game asks of the port.
+- **Packing.** A module packed as LZ4 or as `ZBIC` (system 22 and later) is read either way.
+- **Modules.** A game that loads none of its own as it runs has all its modules kept whole, as on its console. One that loads
+  some (through `nn::ro`; one of those tried loads 36) has only the modules that must be whole kept so, to leave the loader
+  room for the rest. Both kinds were tried.
+- **Memory.** No amount is known or guessed for a game: it takes memory from the console as it asks for it.
+- **Updates.** The newest program, and each update's files over the game's.
 
 **Not every game will run.** When one doesn't, the port leaves `crash.txt` in its folder on the card
-(`/nx-relink/<name>/crash.txt`): open an issue with that file, and the game's name and version.
+(`/nx2-relink/<name>/crash.txt`): open an issue with that file, the game's name and version, and your kaiHEN version.
+
+**The tool tells you when it can't take a game.** Before building, it checks every module of the game's program:
+
+- A packing it doesn't know: `NOT SUPPORTED YET`, with the module's name. Nothing is wrong with your dump; a later release
+  may open it. (LZ4 and `ZBIC`, the two met so far, are both read.)
+- A damaged dump: which file, and how. One case is named outright: a folder copied over FTP in "ASCII" or "Auto" mode arrives
+  damaged in the files that have no extension (`main`, `sdk`, `subsdk0`). Copy the `exefs` folders again in **binary** mode.
+- A Switch game's program: that is nx-relink's.
 
 ## What you need
 
-- A Switch that runs homebrew (Atmosphère), and its homebrew menu **started over a game** (hold R while starting any game), not
-  from the album: a port needs the whole of the console's memory.
-- Your game as an **NSP**, and your console's keys (`prod.keys`, which Lockpick_RCM writes) at `~/.switch/prod.keys`.
-- A computer with Python 3.10 or newer, and [devkitPro](https://devkitpro.org/wiki/Getting_Started) with the `switch-dev` group
-  (devkitA64, libnx, switch-tools).
+- A Switch 2 that runs homebrew. This was made and tried with **kaiHEN 20261117.1**, and with no other version: the homebrew
+  menu started over a game (hold R while starting it). A port needs the whole of the console's memory and kaiHEN's loader
+  service.
+- Your game's dump: a **NUP** container, or a **folder** of its loose files. No keys are needed: these dumps aren't encrypted.
+- A computer with Python 3.10 or newer, [devkitPro](https://devkitpro.org/wiki/Getting_Started) (devkitA64 and switch-tools,
+  from the `switch-dev` group), and [ounce-devkit](https://github.com/ouncebrew/ounce-devkit) installed into it.
+- A way to put files on the console's card: the card in your computer (the fastest, for a game's gigabytes), or an FTP server
+  on the console (port 5000).
 
 Then, in this folder:
 
@@ -73,7 +94,7 @@ Then, in this folder:
 python nxrelink.py setup
 ```
 
-checks all of the above, installs the Python packages that are missing (`pycryptodomex`, `lz4`, `Pillow`), and says where to get
+checks all of the above, installs the Python packages that are missing (`lz4`, `zstandard`, `Pillow`), and says where to get
 whatever it can't install itself.
 
 ## Use
@@ -90,94 +111,142 @@ copies the speed and the time left.
 From a terminal, everything in one go:
 
 ```bash
-python nxrelink.py make game.nsp --update update.nsp --aoc dlc.nsp --name mygame --sd E:
+python nxrelink.py make game.nup --name mygame --sd E:
+python nxrelink.py make game.nup --name mygame --ftp 192.168.0.100:5000
+python nxrelink.py make "dump folder" --name mygame --update "update folder or nup" --ftp 192.168.0.100:5000
 ```
 
 | Command | What it does |
 |---|---|
 | `setup` | Checks what the tool needs; installs the Python packages that are missing |
-| `check <game.nsp>` | Says what the game asks of the port, without building anything |
-| `make <game.nsp>` | Extracts, checks and builds; with `--sd` or `--ftp`, installs too |
+| `make <game.nup \| folder>` | Checks the dump and builds the port; with `--sd` or `--ftp`, installs too |
 | `install <name>` | Puts a port already built on a card |
+| `identity <name>` | Gives a port the name, version and icon the homebrew menu shows |
 | `list` | The ports already built |
 
 Options of `make`:
 
 | Option | For |
 |---|---|
-| `--update <nsp>` | The game's update: its code, and its files over the game's |
-| `--aoc <nsp>` | An add-on content (DLC); may be repeated |
+| `--update <nup \| folder>` | An update kept apart from the game, laid over it |
 | `--name <name>` | The port's short name: its folder on the card |
-| `--keys <prod.keys>` | Your keys, if they aren't at `~/.switch/prod.keys` |
-| `--title`, `--version`, `--icon <picture>` | What the homebrew menu shows; by default, the game's own |
-| `--no-romfs` | The game's files aren't extracted again |
-| `--nro-only` (of `install`) | Only the program (`.nro`) is copied: the game's files are on the card already |
-| `--sd <drive>` or `--ftp <host>` | Installs on the card in this computer, or over the network (an FTP server on the console, port 5000) |
+| `--title`, `--version`, `--icon <picture>` | What the homebrew menu shows; by default, the game's own, if the dump has them |
+| `--sd <drive>` or `--ftp <host>` | Installs on the card in this computer, or over the network |
+| `--nro-only` | Only the program (`.nro`) is copied: the game's files are on the card already. For a port built again |
 | `--sd-format auto \| fat32 \| exfat` | On FAT32 a RomFS of 4 GB or more goes in parts of 2 GB; on exFAT, in one file |
 
-Every file copied is read back from the card and compared with what was sent.
+Every file copied is read back from the card and compared with what was sent. The game's files aren't extracted to the
+computer: their image is made from the dump as it is sent.
 
-On the console the ports show in the homebrew menu, all together in the folder `nx-relink`, each with the game's name, version and icon. Leaving a
-port returns to the HOME menu.
+### Dumps and updates
+
+A folder is read in any of these shapes (a folder that holds only another folder is opened by itself):
+
+| Folder | What it is |
+|---|---|
+| `exefs/`, `romfs/` | One dump: the game, or an update |
+| `base/exefs`, `base/romfs` | The game |
+| `updates/<version>/exefs`, `.../romfs` | Its updates, each in a folder named by its version number |
+
+Updates are applied as the console applies them: the program is the newest one's, and the files are the game's with each
+update's over them, in order of version. The same goes for the packages inside a `.nup`. Add-on content (DLC) isn't installed yet.
+
+`python tools/game2.py info <dump>` says what a dump has and what a port would take from it, without building anything.
+
+### Name, version and icon
+
+They are taken from the dump when it has them. When it hasn't (older `.nup` files, folders), the port shows the dump's file name
+and no icon. Give it whatever you like:
+
+```bash
+python nxrelink.py identity mygame --title "My Game" --version "1.2.0" --icon picture.png --sd E:
+```
+
+or take the game's own from the console, if the game has been used on it (installed, or with its card in), in two steps with
+the port opened once in between:
+
+```bash
+python nxrelink.py identity mygame --ftp 192.168.0.100:5000
+```
+
+### On the console
+
+- The ports show in the homebrew menu, all together in the folder `nx2-relink`.
+- Start the homebrew menu **over a game**, not from the album.
+- Leaving a port returns to the HOME menu.
+- After a port ends with an error, starting the homebrew menu again at once can leave a black screen. Start the host game
+  normally, close it, and then start it again holding R.
 
 ## What is on the card: saves, logs, the crash report
 
-A port is two things on the SD card: its program, **`/switch/nx-relink/<name>.nro`**, which the homebrew menu lists in the folder
-`nx-relink` with nothing else around it, and a folder at the card's root, **`/nx-relink/<name>/`**, with everything else of it:
+A port is two things on the SD card: its program, **`/switch/nx2-relink/<name>.nro`**, which the homebrew menu lists in the folder
+`nx2-relink` with nothing else around it, and a folder at the card's root, **`/nx2-relink/<name>/`**, with everything else of it:
 
-| In `/nx-relink/<name>/` | What it is |
+| In `/nx2-relink/<name>/` | What it is |
 |---|---|
 | `romfs.bin` (or `romfs.bin.00`, `.01`, ...) | The game's files |
-| `aoc<n>.romfs` | Each DLC's files |
 | **`save/`** | **The game's saved data** |
 | **`crash.txt`** | **Written when a run ended badly: the file to send with a report** |
 | `log.txt`, `log.prev.txt` | The log of the last run, and of the one before |
 | `debug` | If this file exists (empty will do), the log is the detailed one |
 
-**Saved data.** A port keeps its saves in `/nx-relink/<name>/save/`, as loose files, exactly as the game writes them. They
-are **apart from the console's own save data**: a port doesn't read or touch the saves of the installed game, and the installed
-game doesn't see the port's. To back a port's saves up, copy that folder; to start over, delete it. Deleting a port's folder
-deletes its saves with it.
+**Saved data.** A port keeps its saves in `/nx2-relink/<name>/save/`, as loose files, exactly as the game writes them.
+They are **apart from the console's own save data**: a port doesn't read or touch the saves of the installed game, and the
+installed game doesn't see the port's. To back a port's saves up, copy that folder; to start over, delete it. Deleting a port's
+folder deletes its saves with it.
 
-Earlier installs kept these elsewhere: in `/nx2/` before 0.1.0 (saves in `/nx2/save/<name>/`), and in `/switch/nx-relink/<name>/`
+Building a port again doesn't touch any of this: install it with `--nro-only` (or "Copy only the program" in the window) and
+only the `.nro` is replaced.
+
+Earlier installs kept these elsewhere: in `/nx2/` before 0.1.0 (saves in `/nx2/save/<name>/`), and in `/switch/nx2-relink/<name>/`
 in 0.1.0 and 0.1.1. Installing the port again with this release moves its files and its saves to the new folder; nothing is
 copied again.
 
-**When a game doesn't work.** `log.txt` always notes what usually ends a game: a request the system refuses, the first call to
-each function of the SDK, the SDK's own closing message. When a run ends with an error (or was still running when the console was
-turned off), the next thing the port does is write `crash.txt`: what ended it, and the last lines of that run's log. Attach it to
-an issue, with the game's name and version.
+**When a game doesn't work.** `log.txt` always notes what usually ends a game: a request the system refuses, a module the loader
+refuses (`[ro] ... REFUSED`), the SDK's own closing message. When a run ends with an error (or was still running when the console
+was turned off), the next time the port starts it writes `crash.txt`: what ended it, the console's error code for it when there
+is one, and the last lines of that run's log. Attach it to an issue, with the game's name and version.
+
+Error codes seen so far: `2168-0000` an instruction the processor doesn't know, `2168-0001` code that isn't there, `2168-0002`
+data that isn't there, `2168-0003` a misaligned access, `2168-0006` the game stopped itself, `2168-0008` a system call the
+console refuses.
 
 For a harder case there is a **detailed log**: `--long-log` when installing, or an empty file named `debug` in the port's folder.
-It writes every system call of the game's start. It is much slower, since each line is on the card before the game goes on.
+It is much slower, since each line is on the card before the game goes on.
 
 ## Advanced options
 
 > [!WARNING]
-> Advanced options change how a port runs. They are there for looking into a game that doesn't work, and are used at your own
-> risk; say that you used one if you report a problem.
+> **These are risky to change.** They change what the game is given when it runs. A wrong value can make a game that worked stop
+> at its start or while it loads. The defaults are what every game tried runs with: leave them alone unless a game needs
+> something else, change one at a time, and say what you changed if you report a problem. They are used at your own risk.
 
-| Option | What it does |
-|---|---|
-| `--long-log` (of `make` and `install`) | The port writes its detailed log from its first run. Much slower, and a large file. Delete `debug` from the port's folder to turn it off |
+| Option of `make` | Default | What it does |
+|---|---|---|
+| `--memory <MB>` | `7800` | How much memory the game is told there is. From `2048` to `8000`; anything else is refused |
+| `--whole auto \| all \| none \| <names>` | `auto` | Which modules are kept whole, as on the console, and which are relinked |
+| `--long-log` | off | The port writes its detailed log from its first run |
 
-The window has the same under **Advanced**.
+The window has the same under **Advanced**, with a confirmation before a port is built with any of them changed.
+
+**Memory.** No amount has to be known for each game, and none is guessed. The port sets nothing aside: when it starts it gives
+back to the console nearly all the memory it received, and the game takes it as it asks for it, as on its console. The one number
+is the most the game is told there is. The console gives an application 9120 MB; the homebrew loader and the port keep about
+1100 of them, which leaves about 8000, and the default is a little under that. A smaller number makes a game that sizes itself
+by it take less; a larger one than the console has left is cut down to what there is.
+
+**Whole modules.** The console's loader maps eight images for a program. A game that loads no modules of its own as it runs has
+all of them kept whole (`auto` does this). One that does load some has only the ones that must be whole kept so (`main` and
+`sdk`, and those with thread-local storage), and the rest relinked, so that there is room for the ones it loads. A game with
+more modules than fit won't run this way, and its log says so.
 
 ## Known limits
 
-- **Memory.** A game that asks for nearly all of the console's memory is left with a few MB to spare.
-- **Host game.** To the system, the running application is the game the homebrew menu was started over. What depends on that
-  game's permissions may vary with it.
-- **Not read:** tickets tied to a console, NCA2, sparse RomFS.
-- Only a Switch game on a Switch. A Switch game doesn't run on a Switch 2 through this tool.
-
-## Related
-
-[nx2-relink](https://github.com/Olmectron/nx2-relink) is a fork of this project that does the same for **Switch 2** games on a
-Switch 2.
-
-`python tools/build.py guest` builds a small test game of the project's own (`guest/`, no Nintendo code), to try a setup without a
-game.
+- **Few games tried.** A game may build and still not start: report it with its `crash.txt`.
+- **Add-on content (DLC)** isn't installed.
+- **Sound** hasn't been checked by ear.
+- **Host game.** To the system, the running application is the game the homebrew menu was started over.
+- Only a Switch 2 game on a Switch 2. A Switch game doesn't run on a Switch 2 through this tool.
 
 ## License
 

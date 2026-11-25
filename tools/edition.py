@@ -9,6 +9,6 @@ of the card a port's files go in.
     'switch2'   nx2-relink    a Switch 2 game's NUP/folder  ->  /nx2-relink/<name>/
     'dev'       both, with what is still being worked on (the copy the two are made from)
 """
-EDITION = 'switch'
+EDITION = 'switch2'
 TOOL = {'switch': 'nx-relink', 'switch2': 'nx2-relink', 'dev': 'nx2-recomp'}[EDITION]
 VERSION = '0.1.3'
