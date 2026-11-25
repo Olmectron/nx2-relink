@@ -42,6 +42,7 @@ processor and sound. Nothing is translated: the game's modules run as they are, 
 | System calls | Pass through the port first, which answers them or lets them through |
 | The game's files (RomFS) | Served from the SD card |
 | Saved data | A folder of the SD card |
+| Mods | Optional: loose files in a folder of the SD card, laid over the game's own when it starts |
 | Memory | Left to the console: the game takes it as it asks for it |
 | Graphics and sound | The game's own SDK, on the console's real drivers |
 
@@ -193,6 +194,7 @@ A port is two things on the SD card: its program, **`/switch/nx2-relink/<name>.n
 | **`crash.txt`** | **Written when a run ended badly: the file to send with a report** |
 | `log.txt`, `log.prev.txt` | The log of the last run, and of the one before |
 | `debug` | If this file exists (empty will do), the log is the detailed one |
+| **`mods/`** | **Optional: files of yours that the game gets in place of its own (below)** |
 
 **Saved data.** A port keeps its saves in `/nx2-relink/<name>/save/`, as loose files, exactly as the game writes them.
 They are **apart from the console's own save data**: a port doesn't read or touch the saves of the installed game, and the
@@ -217,6 +219,27 @@ console refuses.
 
 For a harder case there is a **detailed log**: `--long-log` when installing, or an empty file named `debug` in the port's folder.
 It is much slower, since each line is on the card before the game goes on.
+
+## Mods: replacing a game's files (work in progress)
+
+A file put in the port's folder under **`mods/`**, at the path it has inside the game, is what the game gets in place of its own
+file of that path, from the next time it is started. Nothing is built again and the game's image isn't touched:
+
+```
+/nx2-relink/<name>/mods/Tex/Some_Texture.bntx.zs      in place of the game's  Tex/Some_Texture.bntx.zs
+```
+
+- **It is optional.** With no `mods/` folder, or nothing in it that the game has, a port runs exactly as it did before.
+- **To take a mod out**, delete its file from `mods/`. The game's own file was never changed.
+- **Only files the game already has** are replaced. One the game hasn't is left out, and the log says so. Adding new files
+  isn't done yet.
+- **The file must be in the form the game expects**, its packing included: the port passes it on as it is. Some games also
+  keep a table of every file's size, and a replacement larger than the original may need that table replaced too. That is the
+  game's own matter, and its modding community's.
+- **The log tells you it worked.** `log.txt` begins with one `[mods]` line for each file laid over the game's, and has another
+  the first time the game reads each one.
+
+The game's paths are those of its dump: `python tools/game2.py info <dump>` and the dump's own `romfs/` folder show them.
 
 ## Advanced options
 
@@ -250,7 +273,6 @@ more modules than fit won't run this way, and its log says so.
 
 - **Few games tried.** A game may build and still not start: report it with its `crash.txt`.
 - **Add-on content (DLC)** isn't installed.
-- **Sound** hasn't been checked by ear.
 - **Host game.** To the system, the running application is the game the homebrew menu was started over.
 - Only a Switch 2 game on a Switch 2. A Switch game doesn't run on a Switch 2 through this tool.
 

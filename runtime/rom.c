@@ -5,6 +5,7 @@
 // copied to <folder>/romfs.bin: its reads are served from that file. (An image over 4 GB doesn't fit a file of a FAT32 card's:
 // it can be in parts instead, <name>.romfs.00, .01, ..., all of one size but the last.)
 // On a game's thread: system calls and the host library's service calls only (they use the thread's message buffer, nothing else).
+#include <stdlib.h>
 #include <switch.h>
 
 #include "nx2.h"
@@ -49,11 +50,13 @@ static void image_open(Image *im, char *path) {
     im->ok = im->parts > 0 && im->part_size > 0;
 }
 
+static void mods_open(Image *im);  // (<folder>/mods, further down)
 void nx2_rom_open(void) {
     static char path[FS_MAX_PATH] = NX2_HOME "/romfs.bin";
     image_open(&images[0], path);
     if (images[0].ok) nx2_log("[rom] sdmc:%s: %u MB in %u file(s), the game's files\n", path, (u64)images[0].size >> 20, (u64)images[0].parts);
     else nx2_log("[rom] sdmc:%s isn't there: the game gets the files of the program this was started over\n", path);
+    mods_open(&images[0]);
     for (u32 index = 1; index < ROM_IMAGES && image_count < ROM_IMAGES; index++) {
         static char aoc[FS_MAX_PATH];
         const char *head = NX2_HOME "/aoc";
@@ -110,6 +113,272 @@ static u64 rd64(const u8 *p) { return rd32(p) | (u64)rd32(p + 4) << 32; }
 static void wr32(u8 *p, u32 v) { p[0] = (u8)v, p[1] = (u8)(v >> 8), p[2] = (u8)(v >> 16), p[3] = (u8)(v >> 24); }
 
 // a request's data (after its header and buffer descriptors, on a 16 byte boundary), and its first receive buffer
+// ---------------------------------------------------------------- <folder>/mods: files of the user's, laid over the game's own
+// For trying a mod without making the port or its image again: a file put in <folder>/mods/ under the path it has in the game
+// (mods/Tex/Some.bntx.zs) is what the game gets in place of its own file of that path, from the next time it is started.
+// The game is told nothing. It finds its files itself, in the image's table of files, which it reads through this storage; that
+// table is read into memory once, at the start, and the entry of each file that is in the folder is changed there to say where
+// the file's bytes are now and how many: past the image's end, a place of this storage that is served from the loose file. The
+// rest of the image is served as it always was.
+// With no such folder, or nothing in it that the game has, none of this is in use: the storage is the image, read as before.
+// Only files the game already has are replaced: one it hasn't is said in the log and left out (the tables of names would have to
+// be made again for it). A file has to be in the form the game expects, its packing included.
+#define MODS_MOST 8192
+#define MODS_OPEN 6
+typedef struct {
+    u64 at, size;  // where its bytes are in the storage, and how many
+    u32 path;      // its path under the port's folder, in mods.paths
+    u32 read;      // the game has read from it (said once in the log: that a file put there is really the one in use)
+} Mod;
+static struct {
+    int on;
+    u64 size;                  // the storage's size, with the files laid over it
+    u64 table_at, table_size;  // the image's table of files: where it is, and the copy of it that is given in its place
+    u8 *table;
+    Mod *files;
+    u32 count;
+    char *paths;
+    u32 paths_used, paths_room;
+    struct {
+        FsFile file;
+        u32 which, age;
+        int open;
+    } kept[MODS_OPEN];  // (the loose files being read: a few stay open, the one unused for longest closed for the next)
+    u32 lock, clock;
+} mods;
+
+static int mods_name_is(const u8 *entry_name, u32 entry_len, const char *name, u32 len) {
+    if (entry_len != len) return 0;
+    for (u32 k = 0; k < len; k++)
+        if (entry_name[k] != (u8)name[k]) return 0;
+    return 1;
+}
+// a file's entry in the image's tables, by its path ("Tex/Some.bntx"): its offset in the table of files, or ~0
+static u32 mods_find(const u8 *dirs, u64 dirs_size, const u8 *files, u64 files_size, const char *path) {
+    u32 dir = 0;
+    for (;;) {
+        u32 len = 0;
+        while (path[len] && path[len] != '/') len++;
+        if (!path[len]) {
+            if ((u64)dir + 0x18 > dirs_size) return ~0u;
+            for (u32 f = rd32(dirs + dir + 0xC); f != ~0u; f = rd32(files + f + 4)) {
+                if ((u64)f + 0x20 > files_size) return ~0u;
+                const u32 n = rd32(files + f + 0x1C);
+                if ((u64)f + 0x20 + n > files_size) return ~0u;
+                if (mods_name_is(files + f + 0x20, n, path, len)) return f;
+            }
+            return ~0u;
+        }
+        if ((u64)dir + 0x18 > dirs_size) return ~0u;
+        u32 child = rd32(dirs + dir + 8);
+        for (; child != ~0u; child = rd32(dirs + child + 4)) {
+            if ((u64)child + 0x18 > dirs_size) return ~0u;
+            const u32 n = rd32(dirs + child + 0x14);
+            if ((u64)child + 0x18 + n > dirs_size) return ~0u;
+            if (mods_name_is(dirs + child + 0x18, n, path, len)) break;
+        }
+        if (child == ~0u) return ~0u;
+        dir = child, path += len + 1;
+    }
+}
+static u32 mods_keep(const char *text) {  // a string kept in mods.paths: where
+    u32 len = 0;
+    while (text[len]) len++;
+    if (mods.paths_used + len + 1 > mods.paths_room) {
+        const u32 room = mods.paths_room ? mods.paths_room * 2 : 1u << 16;
+        char *more = realloc(mods.paths, room);
+        if (!more) return ~0u;
+        mods.paths = more, mods.paths_room = room;
+    }
+    const u32 at = mods.paths_used;
+    for (u32 k = 0; k <= len; k++) mods.paths[at + k] = text[k];
+    mods.paths_used += len + 1;
+    return at;
+}
+// (at the start, before the game has a thread: the C library's memory is the host's to use here)
+static void mods_open(Image *im) {
+    static const char folder[] = NX2_HOME "/mods";
+    FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
+    FsDir top;
+    if (!sd || !im->ok || R_FAILED(fsFsOpenDirectory(sd, folder, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &top))) return;
+    fsDirClose(&top);
+    u8 head[0x50];
+    u64 got = 0;
+    if (rom_read(im, 0, head, sizeof head, &got) || got != sizeof head || rd64(head) != 0x50) {
+        nx2_log("[mods] sdmc:%s is there, but the game's image isn't one whose tables this reads: nothing is laid over it\n", folder);
+        return;
+    }
+    const u64 dirs_at = rd64(head + 0x18), dirs_size = rd64(head + 0x20), files_at = rd64(head + 0x38), files_size = rd64(head + 0x40), data_at = rd64(head + 0x48);
+    if (dirs_size > (64u << 20) || files_size > (256u << 20) || dirs_at + dirs_size > (u64)im->size || files_at + files_size > (u64)im->size) return;
+    u8 *dirs = malloc(dirs_size ? dirs_size : 1), *files = malloc(files_size ? files_size : 1);
+    mods.files = malloc(sizeof(Mod) * MODS_MOST);
+    if (!dirs || !files || !mods.files || rom_read(im, dirs_at, dirs, dirs_size, &got) || got != dirs_size || rom_read(im, files_at, files, files_size, &got) ||
+        got != files_size) {
+        nx2_log("[mods] the game's tables of files (%u KB) couldn't be read into memory: nothing is laid over the image\n", (u64)((dirs_size + files_size) >> 10));
+        free(dirs), free(files), free(mods.files), mods.files = NULL;
+        return;
+    }
+    // the folder, and the folders in it, one after another: each one's path (under the folder, "" for itself) waits in mods.paths
+    u64 end = ((u64)im->size + 15) & ~15ull;
+    u32 missing = 0, said = 0;
+    static FsDirectoryEntry entries[8];
+    static char full[FS_MAX_PATH], rel[FS_MAX_PATH];
+    u32 first = mods_keep(""), waiting = first, waiting_end = mods.paths_used;
+    while (waiting != ~0u && waiting < waiting_end) {
+        // (the paths of files found go after the folders', in the same room: a folder's is copied out before the room may move)
+        u32 rel_len = 0;
+        for (const char *p = mods.paths + waiting; *p; p++) rel[rel_len++] = *p;
+        rel[rel_len] = 0;
+        waiting += rel_len + 1;
+        u32 n = 0;
+        for (const char *p = folder; *p; p++) full[n++] = *p;
+        if (rel_len) full[n++] = '/';
+        for (u32 k = 0; k < rel_len; k++) full[n++] = rel[k];
+        full[n] = 0;
+        FsDir d;
+        if (R_FAILED(fsFsOpenDirectory(sd, full, FsDirOpenMode_ReadDirs | FsDirOpenMode_ReadFiles, &d))) continue;
+        for (;;) {
+            s64 count = 0;
+            if (R_FAILED(fsDirRead(&d, &count, 8, entries)) || count <= 0) break;
+            for (s64 e = 0; e < count; e++) {
+                u32 len = rel_len;
+                if (len) rel[len++] = '/';
+                for (const char *p = entries[e].name; *p && len < sizeof rel - 1; p++) rel[len++] = *p;
+                rel[len] = 0;
+                if (entries[e].type == FsDirEntryType_Dir) {
+                    // (a folder met: its path waits its turn, after the others'. Folders are all met before any file's path is
+                    // kept, level by level, only if files' paths were kept elsewhere: so a file's path is kept in a second pass)
+                    const u32 at = mods_keep(rel);
+                    if (at != ~0u) waiting_end = mods.paths_used;
+                } else if (mods.count < MODS_MOST) {
+                    const u32 f = mods_find(dirs, dirs_size, files, files_size, rel);
+                    if (f == ~0u) {
+                        if (missing++ < 12) nx2_log("[mods] %s: the game has no file of that path: left out\n", rel);
+                    } else {
+                        // (its path under the port's folder is kept past the folders' still waiting: waiting_end moves with it,
+                        // and a path that isn't a folder's is told apart by its first character, which no folder's has)
+                        static char kept[FS_MAX_PATH];
+                        u32 k = 0;
+                        kept[k++] = '*';
+                        for (u32 q = 0; q < len && k < sizeof kept - 1; q++) kept[k++] = rel[q];
+                        kept[k] = 0;
+                        const u32 at = mods_keep(kept);
+                        if (at != ~0u) {
+                            waiting_end = mods.paths_used;
+                            Mod *m = &mods.files[mods.count++];
+                            m->at = end, m->size = (u64)entries[e].file_size, m->path = at + 1, m->read = 0;
+                            const u64 where = end - data_at;
+                            for (u32 b = 0; b < 8; b++) files[f + 8 + b] = (u8)(where >> (8 * b)), files[f + 0x10 + b] = (u8)(m->size >> (8 * b));
+                            end = (end + m->size + 15) & ~15ull;
+                            if (said++ < 20) nx2_log("[mods] %s: %u bytes, in place of the game's own\n", rel, m->size);
+                        }
+                    }
+                }
+                rel[rel_len] = 0;
+            }
+        }
+        fsDirClose(&d);
+        // (what waits next may be a file's kept path: those are passed over)
+        while (waiting < waiting_end && mods.paths[waiting] == '*') {
+            while (mods.paths[waiting]) waiting++;
+            waiting++;
+        }
+    }
+    free(dirs);
+    if (!mods.count) {
+        nx2_log("[mods] sdmc:%s: nothing in it that the game has (%u files left out): the game's files are as they were\n", folder, (u64)missing);
+        free(files), free(mods.files), mods.files = NULL;
+        return;
+    }
+    mods.table = files, mods.table_at = files_at, mods.table_size = files_size, mods.size = end, mods.on = 1;
+    nx2_log("[mods] %u files of sdmc:%s are laid over the game's own (%u left out, which the game hasn't); the storage is %u MB now\n", (u64)mods.count, folder,
+            (u64)missing, mods.size >> 20);
+}
+// size bytes of a loose file at offset, into memory of the game's
+static u32 mods_file_read(u32 which, u64 offset, u8 *to, u64 size, u64 *got) {
+    static const char home[] = NX2_HOME "/mods/";
+    static char path[FS_MAX_PATH];
+    u32 rc = 0;
+    *got = 0;
+    while (__atomic_exchange_n(&mods.lock, 1, __ATOMIC_ACQUIRE)) svcSleepThread(0);
+    int slot = -1, oldest = -1;
+    for (int k = 0; k < MODS_OPEN; k++)
+        if (mods.kept[k].open && mods.kept[k].which == which) slot = k;
+    for (int k = 0; k < MODS_OPEN && slot < 0; k++)  // (one not in use, or else the one read longest ago)
+        if (!mods.kept[k].open) {
+            oldest = k;
+            break;
+        } else if (oldest < 0 || mods.kept[k].age < mods.kept[oldest].age) {
+            oldest = k;
+        }
+    if (slot < 0) {
+        slot = oldest;
+        if (mods.kept[slot].open) fsFileClose(&mods.kept[slot].file), mods.kept[slot].open = 0;
+        u32 n = 0;
+        for (const char *p = home; *p; p++) path[n++] = *p;
+        for (const char *p = mods.paths + mods.files[which].path; *p && n < sizeof path - 1; p++) path[n++] = *p;
+        path[n] = 0;
+        FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
+        rc = sd ? fsFsOpenFile(sd, path, FsOpenMode_Read, &mods.kept[slot].file) : 0x2EE202;
+        if (!rc) mods.kept[slot].open = 1, mods.kept[slot].which = which;
+    }
+    if (!rc && !mods.files[which].read) {
+        mods.files[which].read = 1;
+        nx2_log("[mods] %s: the game reads it now, for the first time this run\n", mods.paths + mods.files[which].path);
+    }
+    if (!rc) {
+        mods.kept[slot].age = ++mods.clock;
+        u64 n = 0;
+        rc = fsFileRead(&mods.kept[slot].file, (s64)offset, to, size, FsReadOption_None, &n);
+        *got = n;
+    }
+    __atomic_store_n(&mods.lock, 0, __ATOMIC_RELEASE);
+    return rc;
+}
+// size bytes of the storage as the game is given it, at offset (in range): the image's own, but for its table of files, which is
+// the copy with the entries changed, and what lies past the image's end, which is the loose files'
+static u32 mods_read(Image *im, u64 offset, u8 *to, u64 size, u64 *got) {
+    *got = 0;
+    while (size) {
+        u64 take = size, n = 0;
+        u32 rc = 0;
+        if (offset >= (u64)im->size) {
+            // (which loose file: the last that begins at or before the place)
+            u32 lo = 0, hi = mods.count;
+            while (lo + 1 < hi) {
+                const u32 mid = (lo + hi) / 2;
+                if (mods.files[mid].at <= offset) lo = mid;
+                else hi = mid;
+            }
+            const Mod *m = &mods.files[lo];
+            if (offset >= m->at && offset < m->at + m->size) {
+                if (take > m->at + m->size - offset) take = m->at + m->size - offset;
+                rc = mods_file_read(lo, offset - m->at, to, take, &n);
+            } else {  // between two files, or past the last: nothing
+                const u64 next = lo + 1 < mods.count && mods.files[lo + 1].at > offset ? mods.files[lo + 1].at : mods.size;
+                if (offset < m->at) take = take > m->at - offset ? m->at - offset : take;
+                else if (take > next - offset) take = next - offset;
+                for (u64 k = 0; k < take; k++) to[k] = 0;
+                n = take;
+            }
+        } else if (offset >= mods.table_at && offset < mods.table_at + mods.table_size) {
+            if (take > mods.table_at + mods.table_size - offset) take = mods.table_at + mods.table_size - offset;
+            const u8 *from = mods.table + (offset - mods.table_at);
+            for (u64 k = 0; k < take; k++) to[k] = from[k];
+            n = take;
+        } else {
+            const u64 stop = offset < mods.table_at ? mods.table_at : (u64)im->size;
+            if (take > stop - offset) take = stop - offset;
+            rc = rom_read(im, offset, to, take, &n);
+        }
+        *got += n;
+        if (rc) return rc;
+        if (n != take) return 0;
+        offset += take, to += take, size -= take;
+    }
+    return 0;
+}
+
 static u32 buf_mode;  // (how the last receive buffer looked at was to be mapped: 0 as usual, 1 non-secure allowed, 3 non-device)
 static const u8 *data_of(const u8 *m, u64 *buf, u64 *buf_size) {
     const u32 w0 = rd32(m), w1 = rd32(m + 4);
@@ -183,8 +452,10 @@ int nx2_rom_ipc(u8 *m) {
         const u64 offset = rd64(d + 32), size = rd64(d + 40);
         u32 rc = 0;
         u64 got = 0;
-        if (size > buf_size || offset > (u64)im->size || size > (u64)im->size - offset) rc = 0x2EE202;  // out of range (fs)
-        else if (size) rc = rom_read(im, offset, (u8 *)buf, size, &got);
+        const int laid = mods.on && im == &images[0];  // (<folder>/mods: the game's own image, with files of the user's over it)
+        const u64 whole = laid ? mods.size : (u64)im->size;
+        if (size > buf_size || offset > whole || size > whole - offset) rc = 0x2EE202;  // out of range (fs)
+        else if (size) rc = laid ? mods_read(im, offset, (u8 *)buf, size, &got) : rom_read(im, offset, (u8 *)buf, size, &got);
         if (rc || got != size || rom_logged < 12 || nx2_ipclog) {  // (<folder>/ipclog: every read)
             rom_logged++;
             // (with every read said, a sum of what arrived too: checked against the files on a computer, tools/bench/romsum.py)
@@ -198,7 +469,8 @@ int nx2_rom_ipc(u8 *m) {
     }
     if (cmd == 4) {  // GetSize
         u8 out[8];
-        wr32(out, (u32)im->size), wr32(out + 4, (u32)((u64)im->size >> 32));
+        const u64 whole = mods.on && im == &images[0] ? mods.size : (u64)im->size;
+        wr32(out, (u32)whole), wr32(out + 4, (u32)(whole >> 32));
         answer(m, 0, out, 8, 0);
         return 1;
     }

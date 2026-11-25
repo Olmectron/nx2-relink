@@ -343,7 +343,9 @@ class App:
                       '   save/          the game\'s saved data, as loose files. Copy this folder to back it up; it is apart from the console\'s own saves.\n'
                       '   crash.txt     written when a run ended badly: what happened, and the end of that run\'s log. Send this file with a report.\n'
                       '   log.txt         the last run\'s log (log.prev.txt: the one before).\n'
-                      '   romfs.bin    the game\'s files.', justify='left').pack(anchor='w')
+                      '   romfs.bin    the game\'s files.\n'
+                      '   mods/          optional: a file put here, at the path it has in the game, is used in place of the game\'s own.',
+                   justify='left').pack(anchor='w')
 
     def page_settings(self, page):
         if SWITCH:

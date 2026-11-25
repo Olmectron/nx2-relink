@@ -100,7 +100,7 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
 
 On the card a port is its program, /switch/nx2-relink/<name>.nro, and its folder at the card's root, /nx2-relink/<name>/: the
 game's files, its saved data (save/), its log (log.txt) and, after a run that ended badly, crash.txt: the file to send with a
-report.
+report. A file put in that folder under mods/, at the path it has in the game, is what the game gets in place of its own.
 The game's files stay on this computer and on your card: nothing is sent anywhere else.
 """
 
