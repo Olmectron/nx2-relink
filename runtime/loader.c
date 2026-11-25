@@ -189,7 +189,9 @@ static struct {
     void *target;
     const char *name;
     u32 calls;
+    u8 late;  // 1: a loaded module may export this (overridden or unresolved at load time)
 } plt[PLT_MAX];
+static void *(*late_lookup)(const char *);  // the SDK's lookup for modules loaded at run time (nn::ro)
 static u32 plt_count;
 static int plt_on;
 static int plt_budget = 4000;
@@ -266,6 +268,16 @@ static u32 slow_lock;
 static int trace_budget = 30000;
 int nx2_net_on;  // (netwatch.c: a computer is being told; every call between modules is put in the ring it sends)
 void *nx2_plt_called(u32 i, u64 from) {
+    // Late resolution: a symbol the game's own modules didn't have at load time, which a module loaded at run time (nn::ro)
+    // may export. On the console, rtld's lazy binding finds it then; here, the first call to the slot looks it up.
+    if (plt[i].late && late_lookup) {
+        void *v = (void *)late_lookup(plt[i].name);
+        plt[i].late = 0;
+        if (v) {
+            plt[i].target = v;
+            nx2_log("[load] %s: late, found in a module loaded at run time\n", plt[i].name);
+        }
+    }
 #ifdef __SWITCH2__  // (the ring is the Switch 2 port's: nvnwatch.c)
     if (nx2_net_on) {
         const u32 at = __atomic_fetch_add(&nx2_nvn_ring_in, 1, __ATOMIC_RELAXED) % NX2_NVN_RING;
@@ -345,9 +357,9 @@ void *nx2_plt_called(u32 i, u64 from) {
     }
     return plt[i].target;
 }
-static u64 plt_slot(const Nx2Module *m, const char *name, void *target) {
+static u64 plt_slot(const Nx2Module *m, const char *name, void *target, int late) {
     if (plt_count >= PLT_MAX || nx2_noplt || !strcmp(m->name, "sdk")) return (u64)target;
-    plt[plt_count].target = target, plt[plt_count].name = name;
+    plt[plt_count].target = target, plt[plt_count].name = name, plt[plt_count].late = (u8)late;
     return (u64)(nx2_plt_pool + 2 * plt_count++);
 }
 
@@ -381,6 +393,7 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
             const Sym *s = sym_at(m, symi);
             const char *name = name_of(m, s);
             void *v = s->shndx ? (void *)nx2_host(m, s->value) : nx2_symbol(name);
+            int late = !v && !s->shndx;  // not in the game's own modules: a module loaded at run time may have it
 #ifdef __SWITCH2__
             if (!s->shndx) {  // an import the port answers itself (gl2.c)
                 void *mine = nx2_override(name);
@@ -398,7 +411,7 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
                 *p = weak ? 0 : (u64)(type == R_JUMP_SLOT ? (void *)unresolved : NULL);
                 continue;
             }
-            *p = type == R_JUMP_SLOT ? plt_slot(m, name, v) : (u64)v + (u64)r->addend;
+            *p = type == R_JUMP_SLOT ? plt_slot(m, name, v, late) : (u64)v + (u64)r->addend;
         } else if (type) {
             if (bad_writes++ < 8) nx2_log("[load] %s: relocation type %u isn't handled\n", m->name, (u64)type);
         }
@@ -551,9 +564,10 @@ int nx2_load(void) {
     // those modules where rtld keeps one: at the place this pointer of the SDK's names, which rtld sets to a variable of its own.
     // Left null, the SDK wrote to address 0 in nn::ro::Initialize: a game ended there (data abort,
     // 2168-0002 in the console's report; sdk+156034, 2026-11-25).
-    static void *manual_lookup;
+    // The function, once the SDK has set it, is also used for late resolution of symbols the game's own modules didn't have at
+    // load time (above, nx2_plt_called): on the console, rtld's lazy binding finds them in modules loaded at run time.
     p = nx2_symbol("_ZN2nn2ro6detail36g_pLookupGlobalManualFunctionPointerE");
-    if (p) *p = &manual_lookup;
+    if (p) *p = &late_lookup;
     // (and a flag of rtld's that the SDK reads through a pointer of the same kind as it puts a module in its list: left null, the
     // SDK read address 0 when the game's first module was in memory, sdk+156d28; the same game, the same day. The flag: nothing
     // said by the SDK about the names it binds.)
