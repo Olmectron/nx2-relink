@@ -220,7 +220,15 @@ enum { OP_END, OP_BLEND, OP_COLOR, OP_DEPTH_STENCIL, OP_POLYGON, OP_PROGRAM, OP_
 // be read there.)
 #define LIST (1u << 20)
 #define RECORDERS 4096
+// (A Switch 2 game draws with its own SDK and nothing here is ever started (gl2.c: native), yet the stretches below were part of
+// the program all the same, 500 MB of the console's memory that the game then hadn't: one that maps memory into a stretch of its
+// own as it runs was refused it over and over in its opening, with nothing left (log, 2026-11-25). Built for such a game they
+// are next to nothing.)
+#ifdef NX2_GAME_MB
+#define ARENA (1u << 12)
+#else
 #define ARENA (1u << 24)
+#endif
 typedef struct {
     u64 *words;
     u32 cap, at, start;
@@ -265,8 +273,13 @@ static void put_to(const Named *c, u64 v) {
 // of 8 million words, those still in use copied over when one was full: a race of a game keeps some 20000 lists,
 // more than the stretch held; the course's own lists had no room, and the course wasn't drawn; 2026-11-24.) A handle: bit 62,
 // and the row.
+#ifdef NX2_GAME_MB  // (a Switch 2 game: never used, see ARENA)
+#define STORE (1u << 12)
+#define LISTS (1u << 4)
+#else
 #define STORE (40u << 20)
 #define LISTS (1u << 20)
+#endif
 static u64 store[STORE];
 static u32 store_at, store_free[32];  // (the next word never given; for each size, the first block given back (+1), which holds the next)
 static u32 kept_row, kept_swept;

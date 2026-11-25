@@ -95,6 +95,16 @@ def build(exefs, name, target, work, out_dir, shown=None):
             extra.append(f'-DNX2_GAME_MB={int(info.get("heap") or 7800)}')
         if info.get('apart') and not any(x.startswith('-DNX2_GAME_APART_MB=') for x in extra):
             extra.append(f'-DNX2_GAME_APART_MB={int(info["apart"])}')  # (address space the game keeps apart from its heap: tools/heapdef.py)
+        # (the memory for graphics the game's own description asks for, main.npdm: the runtime says so when the title a port is
+        # started over has less, runtime/main.c)
+        described = f'{exefs.rstrip("/")}/main.npdm'
+        if os.path.isfile(described):
+            head = open(described, 'rb').read(0x18)
+            remote = int.from_bytes(head[0x10:0x14], 'little') >> 20 if head[:4] == b'META' and len(head) >= 0x14 else 0
+            if 0 < remote <= 4096:
+                extra.append(f'-DNX2_GAME_REMOTE_MB={remote}')
+                print(f'{name}: made for {remote} MB of memory for graphics, which a port has from the game it is started over '
+                      '(its log says both figures)')
         changed = False
         for x in extra:  # (given on the command line: kept with the port, for the next time it is built)
             if x.startswith('-DNX2_GAME_MB=') and info.get('heap') != int(x[14:]):

@@ -647,6 +647,13 @@ int nx2_svc(u64 *r, u32 n) {
             svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
             nx2_log("[svc] %s of %x bytes at %x: %x%s (call %u; %u KB mapped so; the process has %u KB free)\n", n == 0x2C ? "MapPhysicalMemory" : "UnmapPhysicalMemory",
                     r[1], r[0], (u64)rc, rc ? " (REFUSED)" : "", (u64)k, now >> 10, (total - used) >> 10);
+#ifdef __SWITCH2__
+            // (What the graphics server holds in this process's name, "remote memory": the two figures the SDK itself asks for when
+            // a mapping of the game's is refused for lack of it; nn::os::GetRemoteMemoryUsage, report of 2026-11-25.)
+            u64 remote_a = 0, remote_b = 0;
+            const u32 ra = svcGetInfo(&remote_a, 31, CUR_PROCESS_HANDLE, 0), rb = svcGetInfo(&remote_b, 32, CUR_PROCESS_HANDLE, 0);
+            nx2_log("[svc]   remote memory: figure 31 is %u KB (%x), figure 32 is %u KB (%x)\n", remote_a >> 10, (u64)ra, remote_b >> 10, (u64)rb);
+#endif
         }
         r[0] = rc;
         return 1;

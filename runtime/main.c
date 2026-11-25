@@ -171,6 +171,23 @@ int main(int argc, char **argv) {
             nx2_log("[nx2] the game is told of %u MB (%u MB of them address space it keeps apart from its heap): its heap, when it asks for one, is the kernel's own, after the host's part\n",
                     most >> 20, apart >> 20);
             live = 1;
+#ifdef NX2_GAME_REMOTE_MB
+            // The memory the graphics server keeps in a program's name, "remote memory": how much there may be of it is set for a
+            // title by its own description (main.npdm, the number at 0x10), so a port has what the title it is started over has,
+            // not what its game was made for. A game that needs more has a mapping of its graphics refused and its SDK ends it
+            // (result 0x82f3, then nn::os::GetRemoteMemoryUsage and an abort; report, 2026-11-25). Nothing here can give more:
+            // it is said, in the log and so in a crash report, for the one who reads it.
+            {
+                u64 there = 0, held = 0;
+                if (R_SUCCEEDED(svcGetInfo(&there, 31, CUR_PROCESS_HANDLE, 0))) {
+                    svcGetInfo(&held, 32, CUR_PROCESS_HANDLE, 0);
+                    const u64 made_for = (u64)NX2_GAME_REMOTE_MB << 20;
+                    nx2_log("[nx2] memory for graphics in this program's name (\"remote memory\"): the title this was started over has %u MB (%u in use); the game was made for %u MB%s" "\n",
+                            there >> 20, held >> 20, made_for >> 20,
+                            there < made_for ? ". THAT IS LESS: the game may end for lack of it. Started over a title that has as much, it would have it" : "");
+                }
+            }
+#endif
         }
 #endif
     }

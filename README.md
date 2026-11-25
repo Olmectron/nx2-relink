@@ -273,7 +273,11 @@ more modules than fit won't run this way, and its log says so.
 
 - **Few games tried.** A game may build and still not start: report it with its `crash.txt`.
 - **Add-on content (DLC)** isn't installed.
-- **Host game.** To the system, the running application is the game the homebrew menu was started over.
+- **Host game.** To the system, the running application is the game the homebrew menu was started over, and some of what a
+  program may have is that game's, not the port's. One such thing is known: the memory the console keeps for a program's
+  graphics, which each game's own description sets. A port whose game was made for more of it than the host game has may end
+  when it runs out. `log.txt` (and so `crash.txt`) says both figures near its start, in the line `memory for graphics`: when
+  the host game has less, start the homebrew menu over another game.
 - Only a Switch 2 game on a Switch 2. A Switch game doesn't run on a Switch 2 through this tool.
 
 ## License
