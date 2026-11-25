@@ -194,13 +194,75 @@ static u32 plt_count;
 static int plt_on;
 static int plt_budget = 4000;
 
+// <folder>/peek: "module offset [offset ...]", all hex: the 8 bytes at that place of the module, and then, each taken as an
+// address, the 8 bytes that many further on; said at every look of the watcher's, and at every call <folder>/tracein logs. For a
+// game that ends reading through an object of its own: which link of the chain is the empty one, and when it is filled.
+static int peek_count = -1;
+static char peek_module[16];
+static unsigned long long peek_at[6];
+static void peek_values(u64 *v, int *bad) {
+    u64 at = 0;
+    *bad = -1;
+    for (unsigned q = 0; q < nx2_module_count; q++) {  // (the module's place: its code, or its data past data_off)
+        const Nx2Module *pm = &nx2_modules[q];
+        if (strcmp(pm->name, peek_module)) continue;
+        at = peek_at[0] < pm->data_off ? (u64)pm->text : (u64)pm->data - pm->data_off;
+    }
+    for (int k = 0; k < peek_count; k++) {
+        v[k] = 0;
+        if (!at || *bad >= 0) continue;
+        at += peek_at[k];
+        MemoryInfo info;
+        u32 page;
+        if (R_FAILED(svcQueryMemory(&info, &page, at)) || !(info.perm & Perm_R)) {
+            *bad = k;
+            continue;
+        }
+        v[k] = *(const volatile u64 *)at;
+        at = v[k];
+    }
+}
+static void nx2_peek_say(int look) {  // (the watcher's thread: the file is read here, with the C library)
+    if (peek_count < 0) {
+        peek_count = 0;
+        FILE *f = fopen(NX2_DIR "peek", "rb");
+        if (f) {
+            int n = 0;
+            if (fscanf(f, "%15s", peek_module) == 1)
+                while (n < 6 && fscanf(f, "%llx", &peek_at[n]) == 1) n++;
+            fclose(f);
+            peek_count = n;
+        }
+    }
+    if (peek_count <= 0) return;
+    u64 v[6] = {0};
+    int bad;
+    peek_values(v, &bad);
+    nx2_log("[peek] look %d: %x %x %x %x (no memory at link %d)" "\n", (s64)look, v[0], v[1], v[2], v[3], (s64)bad);
+}
+static void nx2_peek_at_call(void) {  // (a thread of the game's: system calls and the log only)
+    if (peek_count <= 0) return;
+    u64 v[6] = {0};
+    int bad;
+    peek_values(v, &bad);
+    nx2_log("[peek] at that call: %x %x %x %x (no memory at link %d)" "\n", v[0], v[1], v[2], v[3], (s64)bad);
+}
+
 char nx2_trace[96];
+int nx2_trace_on;  // 0: off; 1: waiting for the function named; 2: every call is logged
+char nx2_tracein_module[16];
+u64 nx2_tracein[16];
+int nx2_tracein_count;
+u64 nx2_tracebt;
+u32 nx2_tracebt_thread;
+static int tracebt_budget = 600;
+u64 nx2_traceat;  // (<folder>/traceat: a call from this offset of the traced module turns the log of every call on)
 // <folder>/slow: the calls of functions whose name has the file's text in it each wait a little first, one thread at a time (with
 // "!" first: the calls of every other function). For a game that ends at no fixed place when it runs at its own speed and doesn't
 // when every call is logged: which calls have to be kept apart.
 char nx2_slow[64];
 static u32 slow_lock;
-int nx2_trace_on;  // 0: off; 1: waiting for the function named; 2: every call is logged
+
 static int trace_budget = 30000;
 int nx2_net_on;  // (netwatch.c: a computer is being told; every call between modules is put in the ring it sends)
 void *nx2_plt_called(u32 i, u64 from) {
@@ -212,13 +274,59 @@ void *nx2_plt_called(u32 i, u64 from) {
         nx2_nvn_ring[at] = (struct nx2_nvn_mark){.thread = tls, .a = from, .b = (u64)plt[i].target, .r = 0, .call = i, .what = 0xFFFF, .phase = 2};
     }
 #endif
+    if (nx2_tracein_count && plt_on) {  // (<folder>/tracein: the calls made from chosen stretches of a module's code, every one)
+        const char *module = "?";
+        u64 off = from;
+        if (nx2_where(from, &module, &off) && !strcmp(module, nx2_tracein_module))
+            for (int k = 0; k < nx2_tracein_count; k++)
+                if (off >= nx2_tracein[2 * k] && off < nx2_tracein[2 * k + 1]) {
+                    u64 tls;
+                    __asm__("mrs %0, tpidrro_el0" : "=r"(tls));
+                    nx2_log("[in] %s, from %s+%x, on thread %x" "\n", plt[i].name, module, off - 4, (u64) * (const u32 *)(tls + 0x110));
+                    if (!*(const volatile u16 *)(tls + 0x100)) nx2_peek_at_call();
+                    if (nx2_traceat && off - 4 == nx2_traceat) nx2_trace_on = 2, nx2_log("[in] every call between modules is logged from here (<folder>/traceat)" "\n");
+                    break;
+                }
+    }
+    if (nx2_tracebt && nx2_trace_on == 2 && plt_on) {  // (<folder>/tracebt: who called, by the frames, at one call site, on one thread)
+        const char *module = "?";
+        u64 off = from, tp;
+        __asm__("mrs %0, tpidrro_el0" : "=r"(tp));
+        if (nx2_where(from, &module, &off) && off - 4 == nx2_tracebt && (!nx2_tracebt_thread || *(const u32 *)(tp + 0x110) == nx2_tracebt_thread) &&
+            __atomic_fetch_sub(&tracebt_budget, 1, __ATOMIC_RELAXED) > 0) {
+            const u64 *frame = __builtin_frame_address(0);
+            char line[220];
+            u32 len = 0;
+            static const char hex[] = "0123456789abcdef";
+            frame = frame ? (const u64 *)frame[0] : NULL;  // (the game's own frames begin one up)
+            for (int k = 0; k < 9 && frame && !((u64)frame & 7) && (u64)frame > 0x10000; k++) {
+                const char *m = "?";
+                u64 o = frame[1] & ((1ull << 39) - 1);
+                nx2_where(o, &m, &o);
+                o -= 4;
+                line[len++] = ' ';
+                for (const char *c = m; *c && len < sizeof line - 20; c++) line[len++] = *c;
+                line[len++] = '+';
+                int digits = 1;
+                while (digits < 16 && o >> (4 * digits)) digits++;
+                for (int d = digits - 1; d >= 0; d--) line[len++] = hex[o >> (4 * d) & 15];
+                const u64 *up = (const u64 *)frame[0];
+                if (up <= frame || (u64)up - (u64)frame > 0x100000) break;
+                frame = up;
+            }
+            line[len] = 0;
+            nx2_log("[bt]%s" "\n", line);
+        }
+    }
     if (nx2_trace_on && plt_on) {
         if (nx2_trace_on == 1 && strstr(plt[i].name, nx2_trace)) nx2_trace_on = 2;
         if (nx2_trace_on == 2 && __atomic_fetch_sub(&trace_budget, 1, __ATOMIC_RELAXED) > 0) {
             const char *module = "?";
             u64 off = from;
             nx2_where(from, &module, &off);
-            nx2_log("[t] %s, from %s+%x\n", plt[i].name, module, off - 4);
+            u64 tp;
+            __asm__("mrs %0, tpidrro_el0" : "=r"(tp));
+            nx2_log("[t] %s, from %s+%x, thread %x\n", plt[i].name, module, off - 4, (u64) * (const u32 *)(tp + 0x110));
         }
     }
     if (nx2_slow[0] && plt_on) {
@@ -534,6 +642,7 @@ static void watch(void *arg) {
                 }
             }
             if (RUNNING_ONLY && n >= 10 && n % 5 == 0) nx2_log("[watch] look %d\n", (s64)n);
+            nx2_peek_say(n);
             if (pause_at && n == pause_at) {
                 extern u32 nx2_threads[96];
                 u32 stopped = 0;
@@ -665,9 +774,16 @@ void nx2_start(u32 main_thread) {
     // was still in its last 32 bytes, where a later SDK keeps a pointer of its C library's: a game
     // (SDK 16.2) followed the host's record as that pointer, in pthread_self, from its initializers (crash report, 2026-11-22).
     // (On a Switch 2 the host's half was saved by nx2_host_capture, and comes back for each call into the host.)
+    // Not its first 32 bytes, which are the kernel's own and stay as the kernel has them: its count of the thread's pinning (0x100),
+    // and, on a later system, the thread's own handle at 0x110, which the kernel writes and an SDK from 22 on reads to know which
+    // thread it is on (23 places of one game's sdk read it, none writes it). Zeroed with the rest, as this was, the first lock
+    // that SDK took looked held by "thread 0", itself, and the SDK ended the program in its own initializers (crash report,
+    // 2026-11-25). An SDK before 22 keeps the handle in its own record of the thread, and never looked there.
     {
         u8 *local = armGetTls();
-        for (u32 k = 0x100; k < 0x200; k++) local[k] = 0;
+        nx2_log("[start] the main thread's local region, the kernel's part: %x %x %x %x" "\n",
+                *(const u64 *)(local + 0x100), *(const u64 *)(local + 0x108), *(const u64 *)(local + 0x110), *(const u64 *)(local + 0x118));
+        for (u32 k = 0x120; k < 0x200; k++) local[k] = 0;
     }
     if (sdk_start) {
         nx2_log("[start] nn::init::Start\n");

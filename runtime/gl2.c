@@ -411,6 +411,37 @@ static void nv_memory_info(u64 *info) {  // nv::GetGraphicsMemoryInfo
     for (u32 k = 0; k < 4; k++) info[k] = 0;
 }
 
+// nn::util::VSNPrintf, watched (<folder>/said): what the game writes with it, in the log. A game that stops itself over
+// something it finds wrong puts the reason in words first, and those words go nowhere a homebrew program can show.
+static int (*real_vsnprintf)(char *, u64, const char *, void *);
+static char said_filter[64];
+static int vsnprintf_watched(char *to, u64 size, const char *format, void *arguments) {
+    const int n = real_vsnprintf(to, size, format, arguments);
+    if (to && size) {
+        char line[161];
+        u32 k = 0;
+        for (; k < sizeof line - 1 && k + 1 < size && to[k]; k++) line[k] = to[k] == 10 || to[k] == 13 ? ' ' : to[k];
+        line[k] = 0;
+        // (with text in <folder>/said: only what has that text in it is logged, and who asked for it, by the frames)
+        if (!said_filter[0] || strstr(line, said_filter)) {
+            nx2_log("[said] %s" "\n", line);
+            if (said_filter[0]) {
+                const u64 *frame = __builtin_frame_address(0);
+                for (int i = 0; i < 16 && frame && !((u64)frame & 7); i++) {
+                    const char *m = "?";
+                    u64 o = frame[1] & ((1ull << 39) - 1);
+                    nx2_where(o, &m, &o);
+                    nx2_log("[said]   called from %s+%x" "\n", m, o - 4);
+                    const u64 *up = (const u64 *)frame[0];
+                    if (up <= frame || (u64)up - (u64)frame > 0x100000) break;
+                    frame = up;
+                }
+            }
+        }
+    }
+    return n;
+}
+
 // nn::os::CreateThread, watched: what it is given and whether it comes back (A game ends inside one, on a Switch 2,
 // before the kernel is asked for the thread; 2026-11-23)
 static u32 (*real_create_thread)(void *, void *, void *, void *, u64, int);
@@ -418,6 +449,12 @@ static u32 create_thread_watched(void *thread, void *entry, void *arg, void *sta
     static u32 n;
     const u32 k = ++n;
     if (nx2_debug) nx2_log("[os] CreateThread %u: record %p, stack %p, %x bytes, priority %d\n", (u64)k, (u64)thread, (u64)stack, size, (s64)priority);
+    if (nx2_debug) {
+        const char *em = "?";
+        u64 eo = (u64)entry & ((1ull << 39) - 1);
+        nx2_where(eo, &em, &eo);
+        nx2_log("[os]   its function: %s+%x, given %p\n", em, eo, (u64)arg);
+    }
     if (nx2_debug) {
         // (who asked, as far up as the frames go; and, when it is a game's own thread class asking (main+6184dc), the
         // thread's name and the heap its stack was asked of: its 30th thread arrives with no record and no stack. Diagnosis, to go.)
@@ -746,6 +783,22 @@ void *nx2_override(const char *name) {
     if (!strcmp(name, "_ZN2nn2os15InitializeMutexEPNS0_9MutexTypeEbi")) {
         real_initialize_mutex = (void (*)(void *, int, int))nx2_symbol(name);
         if (real_initialize_mutex) return initialize_mutex_watched;
+    }
+    if (!strcmp(name, "_ZN2nn4util9VSNPrintfEPcmPKcSt9__va_list")) {
+        static int said = -1;
+        if (said < 0) {
+            FILE *f = fopen(NX2_DIR "said", "rb");
+            said = f != NULL;
+            if (f) {
+                size_t got = fread(said_filter, 1, sizeof said_filter - 1, f);
+                while (got && (said_filter[got - 1] == 10 || said_filter[got - 1] == 13 || said_filter[got - 1] == ' ')) got--;
+                said_filter[got] = 0;
+                if (got <= 1) said_filter[0] = 0;  // (a file made with one character in it: no filter)
+                fclose(f);
+            }
+        }
+        real_vsnprintf = (int (*)(char *, u64, const char *, void *))nx2_symbol(name);
+        if (said && real_vsnprintf) return vsnprintf_watched;
     }
     if (!strcmp(name, "_ZN2nn2os12CreateThreadEPNS0_10ThreadTypeEPFvPvES3_S3_mi")) {
         real_create_thread = (u32 (*)(void *, void *, void *, void *, u64, int))nx2_symbol(name);

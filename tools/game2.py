@@ -295,8 +295,17 @@ def port(path, out, updates=()):
     count = len(dump.files(print))
     # a Switch 2 game: its port is for a Switch 2 alone, has the game's own SDK drive the display and the graphics, and is given
     # this many MB for the game's heap (tools/build.py)
+    # What the game is to be told of memory (tools/heapdef.py): 7800 MB, a little less than a port has, for a game that takes all
+    # it is told of; the console's own figure for one that keeps a stretch of address space apart from its heap, which its own
+    # table of heaps says. "apart" is that stretch: the runtime tells of no more than what there is and that together.
+    import heapdef
+    kept_apart = heapdef.apart(dump.files())
+    if kept_apart:
+        print(f'  the game\'s own table of heaps keeps {kept_apart} MB of address space apart from its heap: it is told of the console\'s '
+              f'{heapdef.CONSOLE} MB, as on its console')
     info = {'title': facts['title'], 'author': facts['author'], 'version': facts['version'], 'title_id': f'{facts["title_id"]:016x}',
-            'switch2': True, 'heap': 7800, 'dump': os.path.abspath(path).replace(os.sep, '/'),
+            'switch2': True, 'heap': heapdef.CONSOLE if kept_apart else 7800, 'apart': kept_apart or 0,
+            'dump': os.path.abspath(path).replace(os.sep, '/'),
             'updates': [os.path.abspath(u).replace(os.sep, '/') for u in updates]}
     if facts['icon'][:2] == bytes([0xFF, 0xD8]):
         import icon as icons

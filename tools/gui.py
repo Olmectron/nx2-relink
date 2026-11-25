@@ -137,7 +137,7 @@ class App:
         self.where, self.sd, self.ftp = tk.StringVar(value='sd'), tk.StringVar(), tk.StringVar()
         self.fmt, self.install_target, self.romfs = tk.StringVar(value='auto'), tk.StringVar(value='switch2' if EDITION == 'switch2' else 'switch'), tk.BooleanVar(value=True)
         self.nro_only = tk.BooleanVar(value=False)
-        self.memory, self.whole, self.long_log = tk.StringVar(value=str(MEMORY[2])), tk.StringVar(value='auto'), tk.BooleanVar(value=False)
+        self.memory, self.whole, self.long_log = tk.StringVar(value=''), tk.StringVar(value='auto'), tk.BooleanVar(value=False)
         self.aocs = []
 
         self.status_panel()  # (packed at the bottom first, so the pages take what is left)
@@ -394,9 +394,10 @@ class App:
             row = tk.Frame(c, bg=CARD)
             row.pack(fill='x')
             ttk.Spinbox(row, textvariable=self.memory, from_=MEMORY[0], to=MEMORY[1], increment=100, width=8).pack(side='left')
-            self.label(row, f'MB   ({MEMORY[0]} to {MEMORY[1]}; default {MEMORY[2]})').pack(side='left', padx=8)
+            self.label(row, f'MB   ({MEMORY[0]} to {MEMORY[1]}). Empty: decided for the game when its port is made').pack(side='left', padx=8)
             self.label(c, 'Nothing is set aside: the game takes memory from the console as it asks for it, and this is only the most it is told there is.\n'
-                          'A game that sizes itself by it takes less with a smaller number. More than the console has left is cut to what there is.',
+                          f'Left empty it is {MEMORY[2]} MB, or the console\'s own {MEMORY[1]} for a game whose own table of heaps asks for that (read from its files).\n'
+                          'A game that sizes itself by it takes less with a smaller number. More than there is is cut to what there is.',
                        soft=True, justify='left').pack(anchor='w', pady=(8, 0))
             c = self.card(page, None, 'Modules kept whole', 'Switch 2 games' if DEV else None)
             row = tk.Frame(c, bg=CARD)
@@ -447,7 +448,7 @@ class App:
                  bg=WARN_BG, fg=INK, font=(FONT, 9), justify='left').pack(anchor='w', pady=(6, 0))
 
     def defaults(self):
-        self.memory.set(str(MEMORY[2]))
+        self.memory.set('')
         self.whole.set('auto')
         self.long_log.set(False)
 
@@ -455,12 +456,12 @@ class App:
         """The advanced options that aren't at their defaults, as arguments; None (said) if one is wrong."""
         args = []
         if switch2_game:
-            memory = self.memory.get().strip() or str(MEMORY[2])
-            if not memory.isdigit() or not MEMORY[0] <= int(memory) <= MEMORY[1]:
-                messagebox.showwarning('Advanced: memory', f'The memory is a number of MB from {MEMORY[0]} to {MEMORY[1]} (the default is {MEMORY[2]}).')
+            memory = self.memory.get().strip()
+            if memory and (not memory.isdigit() or not MEMORY[0] <= int(memory) <= MEMORY[1]):
+                messagebox.showwarning('Advanced: memory', f'The memory is a number of MB from {MEMORY[0]} to {MEMORY[1]}, or empty.')
                 return None
             whole = self.whole.get().strip().replace(' ', '') or 'auto'
-            if int(memory) != MEMORY[2]:
+            if memory:
                 args += ['--memory', memory]
             if whole != 'auto':
                 args += ['--whole', whole]

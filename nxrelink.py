@@ -20,7 +20,7 @@ PY = sys.executable
 ME = 'python nxrelink.py'
 SWITCH, SWITCH2 = EDITION in ('switch', 'dev'), EDITION in ('switch2', 'dev')
 FOR_2 = 'every game' if EDITION == 'switch2' else 'a Switch 2'  # (what the newer console's kit is said to be for: all of nx2-relink's games)
-MEMORY = (2048, 8000, 7800)  # (the least and the most --memory takes, and what a port has when it isn't given; MB)
+MEMORY = (2048, 8992, 7800)  # (the least and the most --memory takes, and what a port has when it isn't given; MB)
 
 HELP_SWITCH = f"""{TOOL} {VERSION}: a Switch game you own, made into a homebrew program (.nro) for a Switch.
 
@@ -85,10 +85,11 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
 
   ADVANCED options of make. They change what the game is given, and a wrong value makes a game that worked stop at its start
   or while it loads. Leave them alone unless a game needs one; nothing here can harm the console.
-      --memory <MB>                  how much memory the game is told there is: {MEMORY[0]} to {MEMORY[1]} (default {MEMORY[2]}). The port sets none
-                                     aside: the game takes what it asks for as it runs, and this is only the most it is told
-                                     of. Less makes a game that sizes itself by it smaller; more than the console has is cut
-                                     to what there is
+      --memory <MB>                  how much memory the game is told there is: {MEMORY[0]} to {MEMORY[1]}. The port sets none aside: the
+                                     game takes what it asks for as it runs, and this is only the most it is told of. By
+                                     default {MEMORY[2]}, or the console's own {MEMORY[1]} for a game whose own table of heaps keeps a
+                                     part of it apart from its heap (read when the port is made). Less makes a game that
+                                     sizes itself by it smaller; more than there is is cut to what there is
       --whole auto | all | none | <module,module>
                                      which of the game's modules are kept whole, as on its console, and which are relinked
                                      (default auto: all of them, or main, sdk and those with thread-local storage when the
@@ -338,8 +339,9 @@ def advanced(memory, whole):
     out = []
     if memory is not None:
         if not memory.isdigit() or not MEMORY[0] <= int(memory) <= MEMORY[1]:
-            sys.exit(f'--memory is a number of MB from {MEMORY[0]} to {MEMORY[1]} (the default is {MEMORY[2]}).')
-        print(f'ADVANCED: the game is told there are {memory} MB of memory (the default is {MEMORY[2]}). A game may not start, or may stop as it loads.')
+            sys.exit(f'--memory is a number of MB from {MEMORY[0]} to {MEMORY[1]}.')
+        print(f'ADVANCED: the game is told there are {memory} MB of memory (by default {MEMORY[2]}, or what its own table of heaps asks). '
+              'A game may not start, or may stop as it loads.')
         out += ['--heap', memory]
     if whole is not None:
         if not re.fullmatch(r'[A-Za-z0-9_,]+', whole):

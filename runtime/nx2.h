@@ -125,6 +125,7 @@ extern int nx2_noplt;  // calls between modules go straight to the function, non
 extern int nx2_stackwatch;  // a thread's stack left at each system call, its least said (<folder>/stackwatch)
 extern int nx2_bounce;  // the game's files are read into the port's memory first, then copied (<folder>/bounce)
 extern int nx2_nvnlock;  // the watched calls of the game's graphics driver, one at a time (<folder>/nvnlock)
+extern int nx2_hold_from, nx2_hold_to;  // the game's threads of these numbers are never started (<folder>/hold)
 extern int nx2_pin;      // each of the game's threads stays on one core for good (<folder>/pin)
 extern int nx2_ipclog;   // every message to a service is logged, with no budget (<folder>/ipclog)
 extern int nx2_onecore;  // the game's threads stay on the system's default core (<folder>/onecore)

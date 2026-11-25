@@ -216,7 +216,7 @@ nx2_host_call:
     add x11, sp, #64
     adrp x12, nx2_tls_host
     add x12, x12, :lo12:nx2_tls_host
-    mov x13, #0
+    mov x13, #0x20              // (from 0x120: the 32 bytes before are the kernel's own, the thread's handle among them)
 1:
     ldr x9, [x20, x13]
     str x9, [x11, x13]
@@ -230,7 +230,7 @@ nx2_host_call:
 3:
     blr x19
     add x11, sp, #64
-    mov x13, #0
+    mov x13, #0x20
 2:
     ldr x10, [x11, x13]
     str x10, [x20, x13]

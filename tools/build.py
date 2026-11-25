@@ -93,6 +93,8 @@ def build(exefs, name, target, work, out_dir, shown=None):
             return None
         if not any(x.startswith('-DNX2_GAME_MB=') for x in extra):
             extra.append(f'-DNX2_GAME_MB={int(info.get("heap") or 7800)}')
+        if info.get('apart') and not any(x.startswith('-DNX2_GAME_APART_MB=') for x in extra):
+            extra.append(f'-DNX2_GAME_APART_MB={int(info["apart"])}')  # (address space the game keeps apart from its heap: tools/heapdef.py)
         changed = False
         for x in extra:  # (given on the command line: kept with the port, for the next time it is built)
             if x.startswith('-DNX2_GAME_MB=') and info.get('heap') != int(x[14:]):

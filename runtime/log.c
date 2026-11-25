@@ -18,6 +18,7 @@ int nx2_debug;
 int nx2_onecore;
 int nx2_ipclog;
 int nx2_pin;
+int nx2_hold_from, nx2_hold_to;
 int nx2_nvnlock;
 int nx2_bounce;
 int nx2_stackwatch;

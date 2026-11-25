@@ -167,6 +167,24 @@ static u32 answer_handle(const u8 *m) {
     return count ? rd32(m + 12 + ((d & 1) ? 8 : 0)) : 0;
 }
 
+static u32 held[16], held_count;  // the threads made and not to be started (<folder>/hold)
+// (the game's own callers at a system call: its frames, from the frame pointer it came in with. The port's stack at a system call
+// is its own, so the walk from here, below, never reaches them)
+static void game_callers_said(const u64 *r) {
+    const u64 *fp = (const u64 *)r[18];
+    const char *module = "?";
+    u64 off = r[19] & ((1ull << 39) - 1);
+    nx2_where(off, &module, &off);
+    nx2_log("[from]   the game's return address: %s+%x\n", module, off);
+    for (int k = 0; k < 32 && fp && !((u64)fp & 7) && (u64)fp > 0x10000; k++) {
+        const u64 from = fp[1] & ((1ull << 39) - 1);
+        module = "?", off = from;
+        nx2_where(from, &module, &off);
+        nx2_log("[from]   the game's caller %u: %s+%x\n", (u64)k, module, off);
+        if (fp[0] <= (u64)fp || fp[0] - (u64)fp > 0x400000) break;
+        fp = (const u64 *)fp[0];
+    }
+}
 #ifdef __SWITCH2__
 // The applet session, on a Switch 2. The system gives a program one registration as an application (appletOE's OpenApplicationProxy),
 // and the host library made it at start: the SDK's own was refused (3e880), and after the host's was closed it ended in a fatal error
@@ -560,6 +578,12 @@ int nx2_svc(u64 *r, u32 n) {
     }
     case 0x08: {  // CreateThread(out handle, entry, argument, stack top, priority, core): done here, so that what the kernel says is seen
         static u32 made;
+        if (nx2_debug) {
+            const char *em = "?";
+            u64 eo = r[1] & ((1ull << 39) - 1);
+            nx2_where(eo, &em, &eo);
+            nx2_log("[svc] a thread is asked for: its function %s+%x, given %p, stack top %p" "\n", em, eo, r[2], r[3]);
+        }
         Handle h = 0;
         const u32 rc = svcCreateThread(&h, (ThreadFunc)r[1], (void *)r[2], (void *)r[3], (int)r[4], (int)r[5]);
         const u32 count = __atomic_add_fetch(&made, 1, __ATOMIC_RELAXED);
@@ -598,9 +622,18 @@ int nx2_svc(u64 *r, u32 n) {
         }
 #endif
         if (rc || nx2_debug) nx2_log("[svc] thread %u of the game's: priority %d, core %d: %x%s\n", (u64)count, (s64)(s32)r[4], (s64)(s32)r[5], (u64)rc, rc ? " (REFUSED)" : "");
+        if (!rc && nx2_hold_from && (int)count >= nx2_hold_from && (int)count <= nx2_hold_to && held_count < 16) held[held_count++] = h;
         r[0] = rc, r[1] = h;
         return 1;
     }
+    case 0x09:  // StartThread(handle): not done for a thread that is held (<folder>/hold)
+        for (u32 k = 0; k < held_count; k++)
+            if (held[k] == (u32)r[0]) {
+                nx2_log("[svc] thread %x is held: not started (<folder>/hold)" "\n", r[0]);
+                r[0] = 0;
+                return 1;
+            }
+        return 0;
     case 0x2C:
     case 0x2D: {  // MapPhysicalMemory, UnmapPhysicalMemory(address, size): done here, so that what the kernel says is seen
         const u32 rc = n == 0x2C ? svcMapPhysicalMemory((void *)r[0], r[1]) : svcUnmapPhysicalMemory((void *)r[0], r[1]);
@@ -701,9 +734,7 @@ int nx2_svc(u64 *r, u32 n) {
         u64 off;
         site_of(r, &module, &off);
         nx2_log("[svc] Break: reason %x, %x, %x, from %s+%x\n", r[0], r[1], r[2], module, off);
-#ifdef __SWITCH2__
-        callers_said();
-#endif
+        game_callers_said(r);
         if (r[1] && r[2] == 4) nx2_log("[svc] Break: the result given is %x\n", (u64) * (const u32 *)r[1]);
         if (r[0] & 0x80000000u) {  // a notification only: the game goes on
             r[0] = 0;

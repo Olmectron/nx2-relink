@@ -148,11 +148,28 @@ int main(int argc, char **argv) {
             // told of 7554 MB where it had had 7748, and ended as it loaded its world (its heaps are some 7.5 GB together; log,
             // 2026-11-25). A game, which asks the kernel for everything it is told of in one piece, only tries that: it gives
             // it back at once and takes what it needs as it goes.
-            const u64 slack = 64ull << 20;
+            // A game that keeps a stretch of address space apart from its heap (NX2_GAME_APART_MB, read from its own table of
+            // heaps when the port is made: tools/heapdef.py) is told of that much more than there is: it takes as its heap what
+            // it is told of less that stretch, into which it maps as it goes, and its fixed heaps only fit in what the console's
+            // own figure leaves. One such game, told of 7800 MB, gave its graphics a heap of no size and ended at its start; told
+            // of the console's 8992 it runs (2026-11-25). Its heap is still no more than what there is.
+#ifndef NX2_GAME_APART_MB
+#define NX2_GAME_APART_MB 0
+#endif
+            const u64 slack = 64ull << 20, apart = (u64)NX2_GAME_APART_MB << 20;
             u64 most = (u64)NX2_GAME_MB << 20;
-            if (heap_given < most + slack) most = heap_given > slack ? (heap_given - slack) & ~0x1FFFFFull : 0;
+            if (heap_given + apart < most + slack) most = heap_given + apart > slack ? (heap_given + apart - slack) & ~0x1FFFFFull : 0;
+            {  // (<folder>/told: the game is told of this many MB, whatever there is. A try, for a game that sizes itself by it.)
+                FILE *t = fopen(NX2_DIR "told", "rb");
+                if (t) {
+                    unsigned long long mb = 0;
+                    if (fscanf(t, "%llu", &mb) == 1 && mb >= 512) most = mb << 20;
+                    fclose(t);
+                }
+            }
             nx2_heap_live(heap_at, heap_host, most);
-            nx2_log("[nx2] the game is told of %u MB: its heap, when it asks for one, is the kernel's own, after the host's part\n", most >> 20);
+            nx2_log("[nx2] the game is told of %u MB (%u MB of them address space it keeps apart from its heap): its heap, when it asks for one, is the kernel's own, after the host's part\n",
+                    most >> 20, apart >> 20);
             live = 1;
         }
 #endif
@@ -200,6 +217,15 @@ int main(int argc, char **argv) {
             FILE *sw = fopen(NX2_DIR "stackwatch", "rb");
             nx2_stackwatch = sw != NULL;
             if (sw) fclose(sw);
+            {  // (<folder>/hold: the game's threads of these numbers, as the log counts them, are made and never started: "54", or
+               // "50-54". For a game the system closes with no word: closed all the same, the cause isn't in those threads; svc.c)
+                FILE *hold = fopen(NX2_DIR "hold", "rb");
+                if (hold) {
+                    if (fscanf(hold, "%d-%d", &nx2_hold_from, &nx2_hold_to) == 1) nx2_hold_to = nx2_hold_from;
+                    fclose(hold);
+                    nx2_log("[nx2] the game's threads %d to %d will be made and not started (<folder>/hold)" "\n", (s64)nx2_hold_from, (s64)nx2_hold_to);
+                }
+            }
             FILE *noplt = fopen(NX2_DIR "noplt", "rb");
             nx2_noplt = noplt != NULL;
             if (noplt) fclose(noplt);
@@ -242,6 +268,39 @@ int main(int argc, char **argv) {
                 while (n && (nx2_slow[n - 1] == 10 || nx2_slow[n - 1] == 13 || nx2_slow[n - 1] == ' ')) n--;
                 nx2_slow[n] = 0;
                 fclose(slow);
+            }
+        }
+        {  // (<folder>/tracein: "module from to [from to ...]", hex offsets: loader.c)
+            extern char nx2_tracein_module[16];
+            extern u64 nx2_tracein[16];
+            extern int nx2_tracein_count;
+            FILE *in = fopen(NX2_DIR "tracein", "rb");
+            if (in) {
+                unsigned long long a, b;
+                if (fscanf(in, "%15s", nx2_tracein_module) == 1)
+                    while (nx2_tracein_count < 8 && fscanf(in, "%llx %llx", &a, &b) == 2)
+                        nx2_tracein[2 * nx2_tracein_count] = a, nx2_tracein[2 * nx2_tracein_count + 1] = b, nx2_tracein_count++;
+                fclose(in);
+                nx2_log("[nx2] the calls made from %d stretches of %s are logged (<folder>/tracein)" "\n", (s64)nx2_tracein_count, nx2_tracein_module);
+                {
+                    extern u64 nx2_tracebt;
+                    extern u32 nx2_tracebt_thread;
+                    FILE *bt = fopen(NX2_DIR "tracebt", "rb");
+                    if (bt) {
+                        unsigned long long v = 0, t = 0;
+                        const int got = fscanf(bt, "%llx %llx", &v, &t);
+                        if (got >= 1) nx2_tracebt = v;
+                        if (got >= 2) nx2_tracebt_thread = (u32)t;
+                        fclose(bt);
+                    }
+                }
+                extern u64 nx2_traceat;
+                FILE *at = fopen(NX2_DIR "traceat", "rb");
+                if (at) {
+                    unsigned long long v = 0;
+                    if (fscanf(at, "%llx", &v) == 1) nx2_traceat = v;
+                    fclose(at);
+                }
             }
         }
         f = fopen(NX2_DIR "trace", "rb");

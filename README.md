@@ -51,8 +51,8 @@ No list of games is kept here. This is an early release, and nothing in the tool
 from one game to the next is read from the game itself, so a game that was never tried has a fair chance.
 
 **How it was tried.** A few commercial Switch 2 games, from NUP dumps with their updates, built with this tool and run on a
-Switch 2 with **kaiHEN 20261117.1**: one from its menus through a new game, saving and loading a saved game; another to its
-title and first screens. Others build and haven't been on a console yet.
+Switch 2 with **kaiHEN 20261117.1**: games of SDK 20 and of SDK 22, some from their menus into a new game (one of them saving
+and loading a saved game), others to their title and first screens.
 
 > [!NOTE]
 > **Compatibility has been tried with kaiHEN 20261117.1 only.** A port leans on things that are kaiHEN's own (its loader
@@ -65,7 +65,9 @@ title and first screens. Others build and haven't been on a console yet.
 - **Modules.** A game that loads none of its own as it runs has all its modules kept whole, as on its console. One that loads
   some (through `nn::ro`; one of those tried loads 36) has only the modules that must be whole kept so, to leave the loader
   room for the rest. Both kinds were tried.
-- **Memory.** No amount is known or guessed for a game: it takes memory from the console as it asks for it.
+- **Memory.** No amount is set aside or guessed for a game: it takes memory from the console as it asks for it. A game whose
+  own table of heaps keeps part of the console's memory apart from its heap is told of the console's full figure, as it sizes
+  itself by it; any other is told of what the port really has.
 - **Updates.** The newest program, and each update's files over the game's.
 
 **Not every game will run.** When one doesn't, the port leaves `crash.txt` in its folder on the card
@@ -225,7 +227,7 @@ It is much slower, since each line is on the card before the game goes on.
 
 | Option of `make` | Default | What it does |
 |---|---|---|
-| `--memory <MB>` | `7800` | How much memory the game is told there is. From `2048` to `8000`; anything else is refused |
+| `--memory <MB>` | by the game | How much memory the game is told there is. From `2048` to `8992`; anything else is refused |
 | `--whole auto \| all \| none \| <names>` | `auto` | Which modules are kept whole, as on the console, and which are relinked |
 | `--long-log` | off | The port writes its detailed log from its first run |
 
@@ -234,8 +236,10 @@ The window has the same under **Advanced**, with a confirmation before a port is
 **Memory.** No amount has to be known for each game, and none is guessed. The port sets nothing aside: when it starts it gives
 back to the console nearly all the memory it received, and the game takes it as it asks for it, as on its console. The one number
 is the most the game is told there is. The console gives an application 9120 MB; the homebrew loader and the port keep about
-1100 of them, which leaves about 8000, and the default is a little under that. A smaller number makes a game that sizes itself
-by it take less; a larger one than the console has left is cut down to what there is.
+1100 of them, which leaves about 8000, and by default a game is told of 7800. One kind of game is told of more, the console's
+own 8992: a game whose own table of heaps (read from its files when the port is made) keeps a stretch of address space apart
+from its heap. Such a game sizes its heap by the console's full figure, and with less its heaps don't fit. A smaller number
+makes a game that sizes itself by it take less; a larger one than there is is cut down to what there is.
 
 **Whole modules.** The console's loader maps eight images for a program. A game that loads no modules of its own as it runs has
 all of them kept whole (`auto` does this). One that does load some has only the ones that must be whole kept so (`main` and
