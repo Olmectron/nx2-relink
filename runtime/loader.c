@@ -172,6 +172,8 @@ int nx2_where(u64 host, const char **module, u64 *offset) {
     return 0;
 }
 
+// (the SDK's own way into the modules a game loads as it runs: nn::ro leaves its function for it where rtld would look, below)
+static void *manual_lookup;
 // a symbol no module has, called: said, and the game ends
 static void unresolved(void) {
     nx2_log("[load] the game called a function no module defines (returning to %p)\n", (u64)__builtin_return_address(0));
@@ -274,6 +276,22 @@ void *nx2_plt_called(u32 i, u64 from) {
         nx2_nvn_ring[at] = (struct nx2_nvn_mark){.thread = tls, .a = from, .b = (u64)plt[i].target, .r = 0, .call = i, .what = 0xFFFF, .phase = 2};
     }
 #endif
+    // A function no module had when the program was put together: looked for again now that it is called. A game whose own code
+    // is a module it loads as it runs has its first module call into that one, and on its console the call is bound at its first
+    // use, among the modules loaded by then (rtld's lazy binding, which asks nn::ro for those it loaded). Bound to the end of the
+    // program from the start, as this was, such a game ended at that call (report, 2026-11-25).
+    if (plt[i].target == (void *)unresolved) {
+        void *v = nx2_symbol(plt[i].name);
+        if (!v && manual_lookup) v = (void *)((u64 (*)(const char *))manual_lookup)(plt[i].name);
+        if (v) {
+            nx2_log("[load] %s, which no module had at the start, is in a module loaded since: bound now" "\n", plt[i].name);
+            plt[i].target = v;
+        } else {
+            nx2_log("[load] the game called %s, which no module defines" "\n", plt[i].name);
+            nx2_crash("the game called a function that none of its modules has (the log's last \"[load]\" line names it)");
+            nx2_exit();
+        }
+    }
     if (nx2_tracein_count && plt_on) {  // (<folder>/tracein: the calls made from chosen stretches of a module's code, every one)
         const char *module = "?";
         u64 off = from;
@@ -345,6 +363,10 @@ void *nx2_plt_called(u32 i, u64 from) {
     }
     return plt[i].target;
 }
+static u64 late_slot(const char *name) {  // (whatever the module and the switches: this one is needed to run, not to log)
+    plt[plt_count].target = (void *)unresolved, plt[plt_count].name = name;
+    return (u64)(nx2_plt_pool + 2 * plt_count++);
+}
 static u64 plt_slot(const Nx2Module *m, const char *name, void *target) {
     if (plt_count >= PLT_MAX || nx2_noplt || !strcmp(m->name, "sdk")) return (u64)target;
     plt[plt_count].target = target, plt[plt_count].name = name;
@@ -395,7 +417,9 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
             if (!v) {
                 const int weak = (s->info >> 4) == 2;
                 if (!weak && missing++ < 40) nx2_log("[load] %s: no module defines %s\n", m->name, name);
-                *p = weak ? 0 : (u64)(type == R_JUMP_SLOT ? (void *)unresolved : NULL);
+                // (a function that is called through a slot: the slot is one of the log's own, with the name, so that the call can
+                // look for it again; loader's nx2_plt_called)
+                *p = weak ? 0 : type != R_JUMP_SLOT ? 0 : plt_count < PLT_MAX ? late_slot(name) : (u64)(void *)unresolved;
                 continue;
             }
             *p = type == R_JUMP_SLOT ? plt_slot(m, name, v) : (u64)v + (u64)r->addend;
@@ -551,7 +575,6 @@ int nx2_load(void) {
     // those modules where rtld keeps one: at the place this pointer of the SDK's names, which rtld sets to a variable of its own.
     // Left null, the SDK wrote to address 0 in nn::ro::Initialize: a game ended there (data abort,
     // 2168-0002 in the console's report; sdk+156034, 2026-11-25).
-    static void *manual_lookup;
     p = nx2_symbol("_ZN2nn2ro6detail36g_pLookupGlobalManualFunctionPointerE");
     if (p) *p = &manual_lookup;
     // (and a flag of rtld's that the SDK reads through a pointer of the same kind as it puts a module in its list: left null, the

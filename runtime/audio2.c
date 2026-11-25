@@ -22,6 +22,7 @@ static struct {
     u32 lock;  // (a spin lock: the host library's mutex names its owner by the thread's own record, which a game's thread hasn't)
     Buffer *first, *last;
     u64 end;  // the tick the queue is played by
+    int rate, channels;  // what the game asked for when it opened the output (48000 and 2 where it asked for none)
     int started;
     void *event;  // the game's SystemEvent for released buffers, if it gave one
     u32 appended;
@@ -33,7 +34,19 @@ static void lock(void) {
 }
 static void unlock(void) { __atomic_store_n(&out.lock, 0, __ATOMIC_RELEASE); }
 
-static u64 ticks_of(u64 bytes) { return bytes / 4 * armGetSystemTickFreq() / 48000; }  // 16 bit stereo at 48 kHz
+static u64 ticks_of(u64 bytes) {  // 16 bit samples, of as many channels and at the rate the output was opened with
+    const u64 frame = 2 * (u64)(out.channels > 0 ? out.channels : 2), rate = out.rate > 0 ? (u64)out.rate : 48000;
+    return bytes / frame * armGetSystemTickFreq() / rate;
+}
+// The SDK's AudioOutParameter: the rate, then the channels, 0 in either for the output's own. A game that asks for six channels
+// and is then told the output has two takes it for a fault of its own and ends (an assertion right after the output is opened;
+// report, 2026-11-25): the silent output has what was asked for.
+static void asked(const void *parameter) {
+    const s32 rate = parameter ? *(const s32 *)parameter : 0;
+    const u16 channels = parameter ? *(const u16 *)((const u8 *)parameter + 4) : 0;
+    out.rate = rate > 0 ? rate : 48000;
+    out.channels = channels >= 1 && channels <= 8 ? channels : 2;
+}
 
 static int list_outs(char *info, int count) {
     if (count < 1) return 0;
@@ -48,15 +61,16 @@ static u32 open_out(void *o) {
     return 0;
 }
 static u32 open_named(void *o, const char *name, const void *p) {
-    (void)name, (void)p;
+    (void)name;
+    asked(p);
     return open_out(o);
 }
 static u32 open_default(void *o, const void *p) {
-    (void)p;
+    asked(p);
     return open_out(o);
 }
 static u32 open_default_event(void *o, void *event, const void *p) {
-    (void)p;
+    asked(p);
     void (*create)(void *, int, int) = (void (*)(void *, int, int))nx2_symbol("_ZN2nn2os17CreateSystemEventEPNS0_15SystemEventTypeENS0_14EventClearModeEb");
     signal_event = (void (*)(void *))nx2_symbol("_ZN2nn2os17SignalSystemEventEPNS0_15SystemEventTypeE");
     if (create && signal_event) create(event, 1, 0), out.event = event;  // (1: cleared by the wait that sees it)
@@ -75,11 +89,11 @@ static void stop_out(void *o) {
 static void close_out(void *o) { (void)o; }
 static int sample_rate(const void *o) {
     (void)o;
-    return 48000;
+    return out.rate > 0 ? out.rate : 48000;
 }
 static int channel_count(const void *o) {
     (void)o;
-    return 2;
+    return out.channels > 0 ? out.channels : 2;
 }
 static int sample_format(const void *o) {
     (void)o;

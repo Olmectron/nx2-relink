@@ -706,7 +706,10 @@ int nx2_svc(u64 *r, u32 n) {
         const u64 size = r[1];
         if (live_base) {  // (a Switch 2 game's: the kernel's own heap, made larger after the host's part)
             void *at = NULL;
-            const u32 rc = size > heap_max ? 0xD201 : svcSetHeapSize(&at, live_host + size);
+            // (More than the game was told of: refused with the kernel's own word for it, "limit reached". The SDK turns that
+            // and "out of memory" into a result its caller may get, and ends the program on any other: a game that grows its heap
+            // until it is refused was ended by the 0xD201 this used to give, which is "out of handles"; reports, 2026-11-25.)
+            const u32 rc = size > heap_max ? 0x10801 : svcSetHeapSize(&at, live_host + size);
             nx2_log("[svc] SetHeapSize %x (%u MB): the kernel's heap made the host's %u MB and that: %x%s\n", size, size >> 20, live_host >> 20, (u64)rc,
                     size > heap_max ? " (more than the game was told of)" : rc ? " (REFUSED)" : "");
             if (!rc) heap_now = size;
@@ -716,7 +719,7 @@ int nx2_svc(u64 *r, u32 n) {
         }
         if (!heap_base || size > heap_max) {
             nx2_log("[svc] SetHeapSize %x: more than the %x set aside\n", size, heap_max);
-            r[0] = 0xD201;  // out of memory (kernel)
+            r[0] = 0x10801;  // (the kernel's "limit reached": what its SDK takes as no more memory)
             return 1;
         }
         heap_now = size;
