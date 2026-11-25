@@ -720,6 +720,9 @@ static void initializers_then_watch(void) {
 // (asked by the SDK's nn::ro for each name a module loaded as the game runs takes from the game's own modules; and by lazy binding)
 static u64 lookup(const char *name) {
     void *v = nx2_symbol(name);
+#ifdef __SWITCH2__
+    if (!v) v = nx2_override(name);
+#endif
     static u32 asked, missing_said;
     const u32 n = __atomic_add_fetch(&asked, 1, __ATOMIC_RELAXED);
     if (!v && __atomic_add_fetch(&missing_said, 1, __ATOMIC_RELAXED) <= 40) nx2_log("[ro] a name asked for at run time that no module has: %s\n", name);

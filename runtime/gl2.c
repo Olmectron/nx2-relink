@@ -355,6 +355,41 @@ static void font_list(int *count, u64 *fonts, int room, u64 language) {
 
 static void nothing(void) {}
 static u32 nothing_ok(void) { return 0; }
+
+// Abort_: the SDK's abort handler (_Z6Abort_v), not in the game's own modules. Without it here the port says "a function no
+// module defines" (loader.c), which masks the reason: with it the log says the SDK called Abort_ and from where.
+static void abort_handler(void) {
+    const char *m = "?";
+    u64 o = (u64)__builtin_return_address(0);
+    nx2_where(o, &m, &o);
+    nx2_log("[abort] the game's SDK called Abort_, from %s+%x\n", m, o);
+    u64 fp = (u64)__builtin_frame_address(0);
+    for (int k = 0; k < 12 && fp && !(fp & 7); k++) {
+        const u64 *frame = (const u64 *)fp;
+        m = "?", o = frame[1];
+        nx2_where(frame[1], &m, &o);
+        nx2_log("[abort]   called from %s+%x\n", m, o);
+        if (frame[0] <= fp || frame[0] - fp > 0x100000) break;
+        fp = frame[0];
+    }
+    nx2_crash("the game's SDK called Abort_; the log says what it did last");
+    nx2_exit();
+}
+
+// glslc: the GLSL shader compiler, a system library on the console. A game's module loaded at run time (nn::ro) may import
+// its functions to compile shaders for the console's GPU. Without the real compiler the shaders can't be compiled; with stubs
+// the game gets further and the log says what happened.
+static u32 glslc_compile_stub(void *object) {
+    (void)object;
+    static u32 said;
+    if (__atomic_add_fetch(&said, 1, __ATOMIC_RELAXED) <= 3)
+        nx2_log("[gl] glslcCompile: the system's shader compiler is not part of this port; the game is told it succeeded\n");
+    return 1;
+}
+static void *glslc_defaults_stub(void) {
+    static u8 defaults[256];
+    return defaults;
+}
 static u32 hdr_none(u8 *on, u32 *format, u16 *nits, const void *display) {
     (void)display;
     *on = 0, *format = 0, *nits = 0;
@@ -752,6 +787,11 @@ void *nx2_override(const char *name) {
     // not the game's module, and a game ended in that search at its first printed line (log, 2026-11-24). The name is
     // the port's to give.
     if (!strcmp(name, "_ZN2nn4diag6detail21GetProcessNamePointerEPPKcPm")) return process_name;
+    if (!strcmp(name, "_Z6Abort_v")) return abort_handler;
+    // grpc_core: thread-local variable initializers of the gRPC library (called once per thread; nothing to set up here)
+    if (!strncmp(name, "_ZTHN9grpc_core", 15)) return nothing;
+    // nn::pia: ZSTD compression trace callbacks (a debugging aid of the networking library; nothing to trace into here)
+    if (strstr(name, "ZSTD_trace_")) return nothing;
 #ifdef NX2_GAME_MB
     // (A try: the thread that starts the amiibo library never comes back from it. A game is closed by the system a
     // moment after that thread's start, every run; 2026-11-24.)
@@ -817,6 +857,16 @@ void *nx2_override(const char *name) {
         if (native) nx2_log("[gl] a Switch 2 game, or <folder>/native is there: the game's own graphics are left to its SDK\n");
     }
     if (native) {
+        // glslc: the GLSL shader compiler, a system library on the console that a game's module loaded at run time (nn::ro)
+        // imports. Without the real compiler the shaders can't be compiled for the console's GPU; with stubs the game gets
+        // further and the log says what it needed.
+        if (!strncmp(name, "glslc", 5)) {
+            if (!strcmp(name, "glslcInitialize")) return nothing_ok;
+            if (!strcmp(name, "glslcFinalize") || !strcmp(name, "glslcSetAllocator")) return nothing;
+            if (!strcmp(name, "glslcCompile") || !strcmp(name, "glslcCompilePreSpecialized") || !strcmp(name, "glslcCompileSpecialized")) return glslc_compile_stub;
+            if (!strcmp(name, "glslcGetVersion")) return nothing_ok;
+            if (!strcmp(name, "glslcGetDefaultOptions")) return glslc_defaults_stub;
+        }
         extern void *nx2_nvn_watch(const char *name);  // (nvnwatch.c: the driver's own functions, counted as the game calls them)
         void *watch = nx2_nvn_watch(name);
         return watch ? watch : nx2_audio_override(name);
