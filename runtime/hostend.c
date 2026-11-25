@@ -22,6 +22,9 @@ static void said(const char *what, u64 a, u64 b, u64 c, void *from) {
         if (frame[0] <= (u64)frame) break;
         frame = (const u64 *)frame[0];
     }
+    // (on the card before the program is gone: the kernel ends it at once, and these lines were left in memory, so a report of
+    // such an end said nothing of it; report, 2026-11-25)
+    nx2_log_flush();
 }
 
 Result __real_svcBreak(u32 reason, uintptr_t address, uintptr_t size);

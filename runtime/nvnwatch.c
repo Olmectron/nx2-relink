@@ -24,6 +24,7 @@ static struct {
     Fn4 real;
     u32 calls;
     int held;  // (not done with <folder>/nogpu there)
+    int shows;  // (it shows a picture: the game's pictures a second are said by these)
 } watched[WATCHED];
 static u32 watched_count;
 
@@ -41,6 +42,18 @@ static void mark(u32 k, u32 n, u32 phase, u64 a, u64 b, u64 r) {
 static u64 called(u32 k, u64 a, u64 b, u64 c, u64 d) {
     const u32 n = __atomic_add_fetch(&watched[k].calls, 1, __ATOMIC_RELAXED);
     mark(k, n, 0, a, b, 0);
+    // (how fast the game runs, in the log: the pictures it showed over each stretch of 256, a few hundred lines at most. A game
+    // that is slow where another part of it is not says so here, with what else the log has of that moment.)
+    if (watched[k].shows && !(n & 255)) {
+        static u64 since;
+        static u32 lines;
+        const u64 now = armGetSystemTick();
+        if (since && lines++ < 400) {
+            const u64 ms = armTicksToNs(now - since) / 1000000;
+            nx2_log("[nvn] 256 pictures shown in %u ms: %u a second\n", ms, ms ? 256000 / ms : 0);
+        }
+        since = now;
+    }
     if (n <= 6 || (n & (n - 1)) == 0)
         nx2_log("[nvn] %s, call %u (%x, %x, %x, %x)%s\n", watched[k].name, (u64)n, a, b, c, d, watched[k].held ? ": not done (<folder>/nogpu)" : "");
     if (!strcmp(watched[k].name, "nvnMemoryPoolInitialize") && nx2_ipclog) {
@@ -98,6 +111,7 @@ static void *get_watched(void *device, const char *name) {
     strncpy(watched[k].name, name, sizeof watched[k].name - 1);
     watched[k].real = (Fn4)p;
     watched[k].held = ((nogpu & 1) && !strcmp(name, "nvnQueueSubmitCommands")) || ((nogpu & 2) && !strncmp(name, "nvnQueuePresentTexture", 22));
+    watched[k].shows = !strncmp(name, "nvnQueuePresentTexture", 22);
     nx2_log("[nvn] the game asks for %s: watched%s\n", name, watched[k].held ? ", and not done (<folder>/nogpu)" : "");
     return (void *)entries[k];
 }

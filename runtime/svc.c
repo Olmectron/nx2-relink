@@ -161,6 +161,20 @@ static const u8 *payload(const u8 *m, const char *magic) {
     return NULL;
 }
 // the first handle an answer carries (a new session), or 0
+// (an answer in the system's newer, shorter form has no "SFCO": its result is the first word after the header and its handles)
+static u32 short_result(const u8 *m) {
+    u32 at = 8;
+    if (rd32(m + 4) >> 31) {
+        const u32 d = rd32(m + 8);
+        at = 12 + ((d & 1) ? 8 : 0) + 4 * ((d >> 1 & 15) + (d >> 5 & 15));
+    }
+    return at + 4 <= 0x100 ? rd32(m + at) : 0;
+}
+// A service the console won't give this program. Which services a program may open is set by its own description (main.npdm), and
+// a port is, to the console, the title it was started over: a game that opens a service that title may not is refused it ("not
+// allowed", 0x1015), and its SDK ends the program on that (a game ended so at its start under one title and runs under another;
+// reports, 2026-11-25). Nothing here can give the service: it is said, and kept for the report.
+static char refused_service[9];
 static u32 answer_handle(const u8 *m) {
     if (!(rd32(m + 4) >> 31)) return 0;
     const u32 d = rd32(m + 8), count = (d >> 1 & 15) + (d >> 5 & 15);
@@ -421,6 +435,16 @@ static void send_sync(u64 *r, const char *module, u64 off, int log) {
 #endif
     const u8 *a = payload(m, "SFCO");
     const u32 result = a ? rd32(a + 8) : 0, got = rc ? 0 : answer_handle(m);
+    if (is_sm && cmd == 1 && !rc && !got) {
+        const u32 said = tipc && h == (u32)r[0] ? short_result(m) : result;
+        if (said == 0x1015) {
+            for (u32 k = 0; k < 9; k++) refused_service[k] = text[k];
+            // (said plainly and no louder: an SDK asks for the fuller forms of a service first and settles for the plain one, so
+            // most of these are nothing; the one a game ends on is named in its report, below)
+            nx2_log("[ipc] sm: the service \"%s\" isn't given to the title this was started over (result 1015, not allowed)\n", text);
+        } else if (said && tipc)
+            nx2_log("[ipc] sm: the service \"%s\" isn't given: result %x\n", text, (u64)said);
+    }
 #ifdef __SWITCH2__
     if (applet_sdk && (u32)r[0] == applet_sdk && !rc && !result) applet_answered(m, got);
 #endif
@@ -568,6 +592,24 @@ int nx2_svc(u64 *r, u32 n) {
         }
         return 0;
     }
+    case 0x02:    // SetMemoryPermission(address, size, permission)
+    case 0x03: {  // SetMemoryAttribute(address, size, mask, value)
+        // A later SDK makes part of each module's data read-only once the modules are put together, and locks it so (the table
+        // of the functions a module calls is in that part). The port gives a slot of that table the function itself after the
+        // slot's first call is said in the log (loader.c's nx2_plt_called), which is a write there: left read-only, the write
+        // ended the game at its first call (seen on a console, 2026-11-25). A module's own data is left writable, then, as it
+        // is for a game of an earlier SDK; any other memory the game asks this of is the kernel's to answer.
+        const char *module = "?";
+        u64 off = r[0];
+        const int lock = n == 0x02 ? (u32)r[2] == 1 : ((u32)r[2] & 0x10) && ((u32)r[3] & 0x10);
+        if (!nx2_noplt && lock && nx2_where(r[0], &module, &off)) {
+            static u32 said;
+            if (said++ < 12) nx2_log("[svc] %s of %s+%x, %x bytes, read-only: left writable (the port writes its table of calls)\n", name_of(n), module, off, r[1]);
+            r[0] = 0;
+            return 1;
+        }
+        return 0;
+    }
     case 0x04: {  // MapMemory(to, from, size): done here, so that a refusal is seen (a thread's stack is mapped so by the SDK)
         const u32 rc = svcMapMemory((void *)r[0], (void *)r[1], r[2]);
         static u32 maps;
@@ -693,8 +735,12 @@ int nx2_svc(u64 *r, u32 n) {
             s32 now = -9;
             u64 mask_now = 0;
             svcGetThreadCoreMask(&now, &mask_now, (Handle)h);
-            nx2_log("[svc] SetThreadCoreMask of thread %x: core %d, cores %x asked: %x%s; it has core %d, cores %x now\n", (u64)h, (s64)(s32)r[1], r[2],
-                    (u64)rc, rc ? " (REFUSED)" : "", (s64)now, mask_now);
+            // (the first of them, and any that is refused: a game that moves its threads between cores as it runs filled the log's
+            // end with these lines, in place of what it did last; report, 2026-11-25)
+            static u32 moves;
+            if (rc || __atomic_fetch_add(&moves, 1, __ATOMIC_RELAXED) < 80)
+                nx2_log("[svc] SetThreadCoreMask of thread %x: core %d, cores %x asked: %x%s; it has core %d, cores %x now\n", (u64)h, (s64)(s32)r[1], r[2],
+                        (u64)rc, rc ? " (REFUSED)" : "", (s64)now, mask_now);
             r[0] = rc;
             return 1;
 #else
@@ -750,7 +796,25 @@ int nx2_svc(u64 *r, u32 n) {
             r[0] = 0;
             return 1;
         }
-        nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked for)");
+        {
+            const u32 given = r[1] && r[2] == 4 ? *(const u32 *)r[1] : 0;
+            static char why[420];
+            if (given == 0x1015 && refused_service[0]) {
+                // (put together by hand: this runs as the game's thread, where the C library isn't to be used)
+                const char *parts[3] = {"the game's SDK ended the program: the console refuses the service \"", refused_service,
+                                        "\" to the game the homebrew menu was started over, and this game needs it. Start the homebrew menu over "
+                                        "another game (the game itself, if you can) and run the port again"};
+                u32 n = 0;
+                for (int k = 0; k < 3; k++)
+                    for (const char *c = parts[k]; *c && n + 1 < sizeof why; c++) why[n++] = *c;
+                why[n] = 0;
+                nx2_crash(why);
+            } else if ((given & 0x1FF) == 2 && (given >> 9) >= 4000 && (given >> 9) < 5000)
+                nx2_crash("the game's SDK ended the program: it read the game's files and found them damaged (a file system result of the \"data is "
+                          "corrupted\" kind). Install the port again, the game's files with it, and see that the card has room for them");
+            else
+                nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked for)");
+        }
         nx2_exit();
     }
     case 0x27: {  // OutputDebugString(text, size)

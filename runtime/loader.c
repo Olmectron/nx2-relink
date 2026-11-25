@@ -191,6 +191,7 @@ static struct {
     void *target;
     const char *name;
     u32 calls;
+    u64 *slot;  // the module's own slot that was pointed here, to be given the function itself once its first call is said
 } plt[PLT_MAX];
 static u32 plt_count;
 static int plt_on;
@@ -361,15 +362,27 @@ void *nx2_plt_called(u32 i, u64 from) {
         nx2_where(from, &module, &off);
         nx2_log("[call] %s, from %s+%x\n", plt[i].name, module, off - 4);
     }
+    // Once its first call is said, a slot is given the function itself, and the game's later calls go straight to it, as on its
+    // console. Left as they were, every call from the game's code to its SDK or its C library came through here for the whole
+    // run: its registers kept, a stack taken under a lock all the threads share, a count they all write. A game in play makes
+    // such calls by the hundred thousand for each picture, and one ran at a fraction of its speed where its films, which make few,
+    // played as they should (seen on a console, 2026-11-25). A slot stays routed only while one of the folder's switches asks to
+    // see every call.
+    if (plt_on && plt[i].slot && plt[i].target != (void *)unresolved && !nx2_tracein_count && !nx2_tracebt && !nx2_trace_on && !nx2_slow[0]
+#ifdef __SWITCH2__
+        && !nx2_net_on
+#endif
+    )
+        __atomic_store_n(plt[i].slot, (u64)plt[i].target, __ATOMIC_RELEASE);
     return plt[i].target;
 }
-static u64 late_slot(const char *name) {  // (whatever the module and the switches: this one is needed to run, not to log)
-    plt[plt_count].target = (void *)unresolved, plt[plt_count].name = name;
+static u64 late_slot(const char *name, u64 *slot) {  // (whatever the module and the switches: this one is needed to run, not to log)
+    plt[plt_count].target = (void *)unresolved, plt[plt_count].name = name, plt[plt_count].slot = slot;
     return (u64)(nx2_plt_pool + 2 * plt_count++);
 }
-static u64 plt_slot(const Nx2Module *m, const char *name, void *target) {
+static u64 plt_slot(const Nx2Module *m, const char *name, void *target, u64 *slot) {
     if (plt_count >= PLT_MAX || nx2_noplt || !strcmp(m->name, "sdk")) return (u64)target;
-    plt[plt_count].target = target, plt[plt_count].name = name;
+    plt[plt_count].target = target, plt[plt_count].name = name, plt[plt_count].slot = slot;
     return (u64)(nx2_plt_pool + 2 * plt_count++);
 }
 
@@ -419,10 +432,10 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
                 if (!weak && missing++ < 40) nx2_log("[load] %s: no module defines %s\n", m->name, name);
                 // (a function that is called through a slot: the slot is one of the log's own, with the name, so that the call can
                 // look for it again; loader's nx2_plt_called)
-                *p = weak ? 0 : type != R_JUMP_SLOT ? 0 : plt_count < PLT_MAX ? late_slot(name) : (u64)(void *)unresolved;
+                *p = weak ? 0 : type != R_JUMP_SLOT ? 0 : plt_count < PLT_MAX ? late_slot(name, (u64 *)p) : (u64)(void *)unresolved;
                 continue;
             }
-            *p = type == R_JUMP_SLOT ? plt_slot(m, name, v) : (u64)v + (u64)r->addend;
+            *p = type == R_JUMP_SLOT ? plt_slot(m, name, v, (u64 *)p) : (u64)v + (u64)r->addend;
         } else if (type) {
             if (bad_writes++ < 8) nx2_log("[load] %s: relocation type %u isn't handled\n", m->name, (u64)type);
         }

@@ -101,10 +101,14 @@ def build(exefs, name, target, work, out_dir, shown=None):
         if os.path.isfile(described):
             head = open(described, 'rb').read(0x18)
             remote = int.from_bytes(head[0x10:0x14], 'little') >> 20 if head[:4] == b'META' and len(head) >= 0x14 else 0
+            system = int.from_bytes(head[0x14:0x18], 'little') >> 10 if head[:4] == b'META' and len(head) >= 0x18 else 0
             if 0 < remote <= 4096:
                 extra.append(f'-DNX2_GAME_REMOTE_MB={remote}')
-                print(f'{name}: made for {remote} MB of memory for graphics, which a port has from the game it is started over '
-                      '(its log says both figures)')
+            if head[:4] == b'META' and system <= 4096 << 10:
+                extra.append(f'-DNX2_GAME_SYSRES_KB={system}')
+            if 0 < remote <= 4096:
+                print(f'{name}: made for {remote} MB of memory for graphics and {system >> 10} MB of system resource. A port has those from '
+                      'the game the homebrew menu is started over: the game itself is the surest choice (the log says what it had)')
         changed = False
         for x in extra:  # (given on the command line: kept with the port, for the next time it is built)
             if x.startswith('-DNX2_GAME_MB=') and info.get('heap') != int(x[14:]):

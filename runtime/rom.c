@@ -51,11 +51,39 @@ static void image_open(Image *im, char *path) {
 }
 
 static void mods_open(Image *im);  // (<folder>/mods, further down)
+static u32 rom_read(Image *im, u64 offset, u8 *to, u64 size, u64 *got);
+// Is the image on the card all there? Its header says where its tables are, and they come last: a copy that was cut short, or a
+// card that ran out of room, leaves a file the game's SDK calls damaged and ends the program on, with nothing said of why (a
+// report, 2026-11-25: 20480 MB in 10 files, and "data is corrupted" at the game's first look). Said here, in words.
+static void image_whole(Image *im) {
+    if (!im->ok) return;
+    static u8 head[0x50];
+    u64 got = 0, w[10];
+    if (rom_read(im, 0, head, sizeof head, &got) || got != sizeof head) {
+        nx2_log("[rom] THE GAME'S FILES ON THE CARD CAN'T BE READ (the image's first bytes): install the port again, the game's files with it\n");
+        return;
+    }
+    for (int k = 0; k < 10; k++) {
+        w[k] = 0;
+        for (int b = 7; b >= 0; b--) w[k] = w[k] << 8 | head[k * 8 + b];
+    }
+    u64 end = w[9];  // (where the files' own bytes begin; the four tables: where each is, and how long)
+    for (int k = 1; k < 9; k += 2)
+        if (w[k] + w[k + 1] > end) end = w[k] + w[k + 1];
+    if (w[0] != 0x50)
+        nx2_log("[rom] THE GAME'S FILES ON THE CARD DON'T BEGIN AS AN IMAGE OF THEM DOES (%x where 50 is): install the port again, the game's files with it\n", w[0]);
+    else if (end > (u64)im->size)
+        nx2_log("[rom] THE GAME'S FILES ON THE CARD ARE INCOMPLETE: the image is %u MB long by its own header, and %u MB of it are there. A copy cut "
+                "short, or a card with no room left: install the port again, the game's files with it\n", end >> 20, (u64)im->size >> 20);
+    else
+        nx2_log("[rom] the image is whole by its own header (%u MB)\n", end >> 20);
+}
 void nx2_rom_open(void) {
     static char path[FS_MAX_PATH] = NX2_HOME "/romfs.bin";
     image_open(&images[0], path);
     if (images[0].ok) nx2_log("[rom] sdmc:%s: %u MB in %u file(s), the game's files\n", path, (u64)images[0].size >> 20, (u64)images[0].parts);
     else nx2_log("[rom] sdmc:%s isn't there: the game gets the files of the program this was started over\n", path);
+    image_whole(&images[0]);
     mods_open(&images[0]);
     for (u32 index = 1; index < ROM_IMAGES && image_count < ROM_IMAGES; index++) {
         static char aoc[FS_MAX_PATH];

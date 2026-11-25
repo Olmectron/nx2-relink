@@ -188,6 +188,22 @@ int main(int argc, char **argv) {
                 }
             }
 #endif
+#ifdef NX2_GAME_SYSRES_KB
+            // The "system resource" of a program: memory the kernel keeps for the program's own bookkeeping, set by its description
+            // too (main.npdm, the number at 0x14). A program that has none can't map memory into its address space as it runs
+            // (MapPhysicalMemory is refused), which the SDK asks before it tries: a game that takes its memory so ended at its
+            // start under a title that has none, where it went on under one that has (the same game, two reports, 2026-11-25).
+            {
+                u64 there = 0;
+                if (R_SUCCEEDED(svcGetInfo(&there, 16, CUR_PROCESS_HANDLE, 0))) {
+                    const u64 made_for = (u64)NX2_GAME_SYSRES_KB << 10;
+                    nx2_log("[nx2] memory the system keeps for a program's own mappings (\"system resource\"): the title this was started over has %u MB; the game was made for %u MB%s\n",
+                            there >> 20, made_for >> 20,
+                            !there && made_for ? ". THERE IS NONE: a game that maps memory as it runs can't here, and may end at its start. Started over a title that has some, it would have it"
+                            : "");
+                }
+            }
+#endif
         }
 #endif
     }

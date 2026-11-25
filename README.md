@@ -93,6 +93,21 @@ and loading a saved game), others to their title and first screens.
 - A way to put files on the console's card: the card in your computer (the fastest, for a game's gigabytes), or an FTP server
   on the console (port 5000).
 
+> [!IMPORTANT]
+> **Which game you start the homebrew menu over matters.** To the console, a port *is* that game, and it has what that game's
+> own description allows, not what its own game was made for. Three such things are known:
+>
+> - the **memory for graphics** the console keeps for the program;
+> - its **system resource**: without any, a program can't map memory as it runs, which some games do from their start;
+> - the **system services** it may open.
+>
+> A port whose game needs more than the host game has ends at its start, or as it runs. **Start the homebrew menu over the
+> same game the port was made from, whenever you can**: it has exactly what the game needs. Otherwise try another game, a
+> large and recent one for choice.
+>
+> `log.txt` (and so `crash.txt`) says near its start what the host game had and what the port's game was made for, and names
+> a service the console refused. The tool says the game's own figures when it builds a port.
+
 Then, in this folder:
 
 ```bash
@@ -273,11 +288,12 @@ more modules than fit won't run this way, and its log says so.
 
 - **Few games tried.** A game may build and still not start: report it with its `crash.txt`.
 - **Add-on content (DLC)** isn't installed.
-- **Host game.** To the system, the running application is the game the homebrew menu was started over, and some of what a
-  program may have is that game's, not the port's. One such thing is known: the memory the console keeps for a program's
-  graphics, which each game's own description sets. A port whose game was made for more of it than the host game has may end
-  when it runs out. `log.txt` (and so `crash.txt`) says both figures near its start, in the line `memory for graphics`: when
-  the host game has less, start the homebrew menu over another game.
+- **Host game.** To the system, the running application is the game the homebrew menu was started over, and what a program
+  may have is that game's, not the port's: its memory for graphics, its system resource, the services it may open (see *What
+  you need*). Nothing in a port can give what the host game hasn't.
+- **A fault leaves no place.** When the console closes a port for a fault, it hands the program nothing: `crash.txt` has the
+  kind of fault, from the console's own record, and the log up to it, but not where it happened. A report made with the
+  detailed log on (*Advanced options*) says much more.
 - Only a Switch 2 game on a Switch 2. A Switch game doesn't run on a Switch 2 through this tool.
 
 ## License
