@@ -28,6 +28,8 @@ A fork of [nx-relink](https://github.com/Olmectron/nx-relink), which does the sa
 > and attach that file** (and `log.txt`, beside it), with the game's name and version: that is everything needed to look into it.
 > It is plain text you can read before sending, and has no account or serial number in it.
 
+<p align="center"><img src="docs/window.png" alt="The nx2-relink window: choose the game, the card, and press Build and install" width="760"></p>
+
 ## What it does
 
 A Switch 2 game is already code for the Switch 2's processor, and its own SDK already drives that console's display, graphics
