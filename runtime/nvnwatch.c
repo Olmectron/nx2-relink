@@ -44,6 +44,14 @@ static u64 called(u32 k, u64 a, u64 b, u64 c, u64 d) {
     mark(k, n, 0, a, b, 0);
     // (how fast the game runs, in the log: the pictures it showed over each stretch of 256, a few hundred lines at most. A game
     // that is slow where another part of it is not says so here, with what else the log has of that moment.)
+    // (and the longest wait between two pictures of the stretch: a game that stops for a moment now and then shows it here,
+    // where the stretch's sum hides it)
+    static u64 shown_last, shown_longest;
+    if (watched[k].shows) {
+        const u64 now = armGetSystemTick();
+        if (shown_last && now - shown_last > shown_longest) shown_longest = now - shown_last;
+        shown_last = now;
+    }
     if (watched[k].shows && !(n & 255)) {
         static u64 since;
         static u32 lines;
@@ -54,7 +62,9 @@ static u64 called(u32 k, u64 a, u64 b, u64 c, u64 d) {
             // game that ends as it loads a new place with this at its top ended for lack of it)
             u64 most = 0, held = 0;
             svcGetInfo(&most, 31, CUR_PROCESS_HANDLE, 0), svcGetInfo(&held, 32, CUR_PROCESS_HANDLE, 0);
-            nx2_log("[nvn] 256 pictures shown in %u ms: %u a second; memory for graphics: %u of %u MB in use\n", ms, ms ? 256000 / ms : 0, held >> 20, most >> 20);
+            nx2_log("[nvn] 256 pictures shown in %u ms: %u a second, the longest wait between two %u ms; memory for graphics: %u of %u MB in use\n", ms, ms ? 256000 / ms : 0,
+                    armTicksToNs(shown_longest) / 1000000, held >> 20, most >> 20);
+            shown_longest = 0;
         }
         since = now;
     }

@@ -16,7 +16,8 @@
 //   - at its start, what the SDK reads at the start of a stretch of code to find the module's own header (three words: the module's
 //     first, and where its two headers are, from here);
 //   - the thunks: a system call in the code becomes a branch to one, which calls nx2_svc_entry (svc_entry.s) with the call's number
-//     in w16, as the relinker's thunks do, and goes back.
+//     in w16, as the relinker's thunks do, and goes back. A branch reaches 128 MB either way: a module with more code than that
+//     has the thunks of its far system calls after its code, in what is left of the code's last page.
 #ifdef __SWITCH2__
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,10 +73,38 @@ int nx2_map_modules(void) {
         w[12] = (u32)(shift + m->data_off), w[13] = (u32)(rw_end - m->data_off);     // the data
         w[14] = (u32)bss_size;
         memcpy(nro + 0x40, "nx2-recomp:", 11), strncpy((char *)nro + 0x40 + 11, m->name, 20);  // (a name of its own where an NRO has its number)
-        u32 *t = (u32 *)(nro + 0x80);
-        const u64 literal = 0x80 + im->nsvcs * 24ull;
-        for (u32 i = 0; i < im->nsvcs; i++, t += 6) {
-            const u64 site = shift + im->svcs[2 * i], n = im->svcs[2 * i + 1], here = 0x80 + i * 24ull;
+        // A branch reaches 128 MB either way, and the thunks are in the image's first page: a system call further into a module's
+        // code than that had its branch wrap, and the game jumped to the wrong place (a main of 192 MB of code: an instruction abort
+        // at its start, with nothing in the log; nx2-relink's pull request 24, whose change this is). Such a call's thunk is put
+        // after the code instead, in what is left of the code's last page before the read-only data, which is mapped with the code.
+        // A module with less code than the reach has every thunk where it was.
+        // (<folder>/farthunks: a try, the reach taken as 1 MB, so that a module of the usual size has thunks of the far kind.)
+        s64 reach = 0x8000000;
+        {
+            FILE *t = fopen(NX2_F("farthunks"), "rb");
+            if (t) fclose(t), reach = 0x100000;
+        }
+        u32 far_count = 0;
+        for (u32 i = 0; i < im->nsvcs; i++)
+            if ((s64)(shift + im->svcs[2 * i]) - 0x80 >= reach) far_count++;
+        const u64 far_base = (shift + im->text_size + 7) & ~7ull, far_literal = far_base + far_count * 24ull;
+        if (far_count && far_literal + 8 > shift + im->ro_off) {
+            nx2_log("[load] %s: %u system calls are further into its code than a branch reaches, and the code's last page has no room for "
+                    "their thunks (%x bytes left)\n", m->name, (u64)far_count, shift + im->ro_off - far_base);
+            return -1;
+        }
+        const u32 near_count = im->nsvcs - far_count;
+        const u64 near_literal = 0x80 + near_count * 24ull;
+        u32 near_at = 0, far_at = 0;
+        for (u32 i = 0; i < im->nsvcs; i++) {
+            const u64 site = shift + im->svcs[2 * i], n = im->svcs[2 * i + 1];
+            const int far = (s64)site - 0x80 >= reach;
+            const u64 here = far ? far_base + far_at++ * 24ull : 0x80 + near_at++ * 24ull, literal = far ? far_literal : near_literal;
+            if (far && (s64)(here - site) >= 0x8000000) {  // (more than 256 MB of code: neither place is within a branch of it)
+                nx2_log("[load] %s: a system call at %x is out of a branch's reach from both ends of its code\n", m->name, site - shift);
+                return -1;
+            }
+            u32 *t = (u32 *)(nro + here);
             t[0] = 0xA9BF7BF0;                                             // stp x16, x30, [sp, #-16]!
             t[1] = 0x52800010 | (u32)n << 5;                               // mov w16, #n
             t[2] = 0x5800001E | (u32)((literal - (here + 8)) / 4) << 5;    // ldr x30, <nx2_svc_entry's address, after the thunks>
@@ -86,7 +115,12 @@ int nx2_map_modules(void) {
             // in the state it is made in, and anything the runtime did around it, a line in the log, ended the program)
             if (n != 0x36) *(u32 *)(nro + site) = 0x14000000 | (u32)(((s64)here - (s64)site) / 4 & 0x3FFFFFF);
         }
-        *(u64 *)(nro + literal) = (u64)nx2_svc_entry;
+        *(u64 *)(nro + near_literal) = (u64)nx2_svc_entry;
+        if (far_count) {
+            *(u64 *)(nro + far_literal) = (u64)nx2_svc_entry;
+            nx2_log("[load] %s: %u of its %u system calls are further into its code than a branch reaches: their thunks are after the code\n", m->name,
+                    (u64)far_count, (u64)im->nsvcs);
+        }
         nx2_log("[load] %s: to be mapped whole by the loader service: an image of %u KB at %p, %u KB of bss at %p\n", m->name, nro_size >> 10, (u64)nro, bss_size >> 10,
                 (u64)bss);
         nx2_log_flush();

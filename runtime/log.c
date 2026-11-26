@@ -116,6 +116,15 @@ static void flush(void) {
     mutexUnlock(&flush_lock);
 }
 void nx2_log_flush(void) { flush(); }
+// The same for a thread that may be the game's, where the C library isn't to be used: it waits, half a second at most, until the
+// writer thread has on the card all that was logged so far. (hostend.c called nx2_log_flush for this, from 0.1.8 on: on a thread of
+// the game's the C library has no state of its own and the host library ends the program for it (345-0012), which came back here
+// through the same wrapper, round and round. A game whose SDK ended it stayed on a black screen in place of closing; reports,
+// 2026-11-26.)
+void nx2_log_settle(void) {
+    const u64 upto = __atomic_load_n(&ring_in, __ATOMIC_SEQ_CST);
+    for (int k = 0; k < 500 && flushed < upto; k++) svcSleepThread(1000000);
+}
 
 // ---------------------------------------------------------------- a run that ended badly: <folder>/crash.txt
 // One file, always of the same name and in the port's own folder, to send with a report: what ended the run in words, what the port

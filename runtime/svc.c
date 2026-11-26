@@ -950,7 +950,12 @@ int nx2_svc(u64 *r, u32 n) {
         static u32 said;
         const u64 now = n == 0x2C ? __atomic_add_fetch(&mapped, rc ? 0 : r[1], __ATOMIC_RELAXED) : __atomic_sub_fetch(&mapped, rc ? 0 : r[1], __ATOMIC_RELAXED);
         const u32 k = __atomic_add_fetch(&said, 1, __ATOMIC_RELAXED);
-        if (rc || k <= 8 || (k & (k - 1)) == 0) {
+        // (A refusal is said the first sixteen times and then at each power of two, not every time: a line's caller waits until
+        // the card has the line, log.c, and a game that has taken all the memory there is and asks for more at every picture, sixty
+        // times a second, was held up by its own refusals' lines: it stopped for a moment every few seconds; 2026-11-26.)
+        static u32 refusals;
+        const u32 nth = rc ? __atomic_add_fetch(&refusals, 1, __ATOMIC_RELAXED) : 0;
+        if ((rc && (nth <= 16 || (nth & (nth - 1)) == 0)) || (!rc && (k <= 8 || (k & (k - 1)) == 0))) {
             u64 total = 0, used = 0;
             svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
             svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);

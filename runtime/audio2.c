@@ -149,8 +149,7 @@ static Buffer *released(void *o) {
 u32 nx2_audio_master;
 u32 nx2_audren_master;  // the same for the audio renderer's manager (audren:u)
 
-void *nx2_audio_override(const char *name) {
-    if (nx2_audio_master) return NULL;
+static void *silent_out(const char *name) {
     static const struct {
         const char *name;
         void *fn;
@@ -177,5 +176,12 @@ void *nx2_audio_override(const char *name) {
     for (u32 k = 0; k < sizeof table / sizeof *table; k++)
         if (!strcmp(table[k].name, name)) return table[k].fn;
     return NULL;
+}
+void *nx2_audio_override(const char *name) {
+    return nx2_audio_master ? NULL : silent_out(name);
+}
+// (is this one of the SDK's AudioOut functions, the ones the silent output stands in for: gl2.c says so once in the log)
+int nx2_audio_out_name(const char *name) {
+    return silent_out(name) != NULL;
 }
 #endif

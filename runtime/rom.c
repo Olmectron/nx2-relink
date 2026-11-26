@@ -536,7 +536,12 @@ int nx2_aoc_ipc(u8 *m) {
         u32 n = 0;
         for (u32 k = from; k < count && n < want && (n + 1) * 4 <= buf_size; k++, n++) wr32((u8 *)buf + n * 4, images[1 + k].index);
         wr32(raw, n), raw_size = 4;
-    } else if (cmd != 6 && cmd != 7) {  // (6, 7: PrepareAddOnContent, done)
+    } else if (cmd != 6 && cmd != 7 && cmd != 11 && cmd != 12 && cmd != 50) {
+        // (6, 7: PrepareAddOnContent, done. 11, 12: NotifyMountAddOnContent and NotifyUnmountAddOnContent, which the SDK sends as
+        // the game mounts the add-on content given from the card, and 50: CheckAddOnContentMountStatus, which it asks before it
+        // opens a user. The console's own service knows nothing of content mounted in the name of the title this was started
+        // over: it answered 50 with 320a6 and the SDK ended the game (2166-0400) as it opened its user. So none of the three
+        // reaches it: they have no data to give back. nx2-relink's issue 25, whose finding and change this is.)
         return 0;
     }
     nx2_log("[aoc] command %u: answered from the card (%u add-on content there)\n", (u64)cmd, (u64)count);

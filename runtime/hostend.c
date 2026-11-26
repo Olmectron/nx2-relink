@@ -6,7 +6,7 @@
 
 #include "nx2.h"
 void nx2_log(const char *fmt, ...);
-void nx2_log_flush(void);
+void nx2_log_settle(void);
 
 static void said(const char *what, u64 a, u64 b, u64 c, void *from) {
     const char *m = "?";
@@ -24,7 +24,7 @@ static void said(const char *what, u64 a, u64 b, u64 c, void *from) {
     }
     // (on the card before the program is gone: the kernel ends it at once, and these lines were left in memory, so a report of
     // such an end said nothing of it; report, 2026-11-25)
-    nx2_log_flush();
+    nx2_log_settle();
 }
 
 Result __real_svcBreak(u32 reason, uintptr_t address, uintptr_t size);

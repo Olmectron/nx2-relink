@@ -819,7 +819,29 @@ void *nx2_override(const char *name) {
     if (native) {
         extern void *nx2_nvn_watch(const char *name);  // (nvnwatch.c: the driver's own functions, counted as the game calls them)
         void *watch = nx2_nvn_watch(name);
-        return watch ? watch : nx2_audio_override(name);
+        if (watch) return watch;
+#ifdef NX2_GAME_MB
+        // A Switch 2 game's AudioOut is its SDK's own, as its audio renderer is: this console's SDK reaches both through aud:u
+        // (its ListAudioOuts and its audio renderer manager open the same session of it), which the game the port is started
+        // over may open. The silent output of audio2.c is for a Switch game, whose SDK asks for audout:u and is refused; it was
+        // given here as well, and a Switch 2 game that plays through AudioOut ran with no sound (reports, 2026-11-26).
+        // (<folder>/silentaudio: the silent output all the same, for a game that doesn't get past opening its sound.)
+        static int silent = -1;
+        if (silent < 0) {
+            FILE *f = fopen(NX2_F("silentaudio"), "rb");
+            silent = f != NULL;
+            if (f) fclose(f);
+            if (silent) nx2_log("[audio] <folder>/silentaudio is there: the game's AudioOut is given a silent output\n");
+        }
+        if (!silent) {
+            extern int nx2_audio_out_name(const char *name);  // (audio2.c)
+            static int said;
+            if (!said && nx2_audio_out_name(name))
+                said = 1, nx2_log("[audio] the game asks for the SDK's AudioOut: left to its SDK, as its audio renderer is\n");
+            return NULL;
+        }
+#endif
+        return nx2_audio_override(name);
     }
     static const struct {
         const char *name;

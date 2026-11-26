@@ -108,6 +108,44 @@ class Nup:
             raise SystemExit(f'{name} is kept in a way this doesn\'t read ({codec})')
         return data
 
+    def pieces(self, k, step=8 << 20):
+        # A file's bytes a piece at a time. read() takes a whole file into memory, which for a game kept as one or two files of
+        # several GB each is minutes before the first byte and as much memory as the file: a console waiting for an image's
+        # first block (Toronja Transfer waits thirty seconds) gave up on it. (2026-11-26)
+        name, size, at, kept, digest, codec = self.file(k)
+        if codec == 0:
+            done = 0
+            while done < kept:
+                self.f.seek(at + done)
+                data = self.f.read(min(step, kept - done))
+                if not data:
+                    break
+                done += len(data)
+                yield data
+        elif codec == 1:
+            if not zstandard:
+                raise SystemExit('this file is compressed with zstd: pip install zstandard')
+            box = self
+
+            class Kept:  # (the file's kept bytes alone, read where they are each time: the container's file is shared)
+                def __init__(self):
+                    self.done = 0
+
+                def read(self, n=-1):
+                    n = kept - self.done if n < 0 else min(n, kept - self.done)
+                    box.f.seek(at + self.done)
+                    data = box.f.read(n)
+                    self.done += len(data)
+                    return data
+            reader = zstandard.ZstdDecompressor().stream_reader(Kept(), read_size=1 << 20)
+            while True:
+                data = reader.read(step)
+                if not data:
+                    break
+                yield data
+        else:
+            raise SystemExit(f'{name} is kept in a way this doesn\'t read ({codec})')
+
     def facts(self, package):
         """A package's facts by name (FACTS): {'title': b'...', 'icon': b'...', ...}."""
         if not hasattr(self, 'first_fact'):
@@ -149,7 +187,7 @@ def package_files(nup, package):
     root = nup.packages[package]['romfs']
     if root == 0xFFFFFFFF:
         raise SystemExit('that package has no romfs folder')
-    return {path: (nup.file(i)[1], lambda i=i: (nup.read(i),)) for path, i in nup.walk(root)}
+    return {path: (nup.file(i)[1], lambda i=i: nup.pieces(i)) for path, i in nup.walk(root)}
 
 
 class RomFS:
