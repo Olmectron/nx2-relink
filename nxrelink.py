@@ -81,6 +81,10 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
                                      the game's name and version gives them to the port by itself; one that hasn't leaves the
                                      dump's file name and no icon until this is done. The port is built again, and put on the
                                      card if one is given
+  {ME} remake [<name> ...] [--sd <drive> | --ftp <host>]
+                                     every port already built (or the ones named) built again with this version of the tool,
+                                     from what was kept of each when it was made, with its own settings; with a card, each
+                                     one's program is copied to it (the game's files there stay). For after an update
   {ME} list                 the ports already built
 
   ADVANCED options of make. They change what the game is given, and a wrong value makes a game that worked stop at its start
@@ -383,6 +387,31 @@ def cmd_install(args):
     phase(2, 2, f'done. {name or "It"} is on the card')
 
 
+def cmd_remake(args):
+    """Every port already built, or the ones named, built again with this version of the tool: from the game's code as it was
+    kept when the port was made (build/<name>_nsp, with what was said of it then: its memory, its modules, its name and icon),
+    so no dump has to be there. With a card, each one's program is copied to it; the game's files on the card are left."""
+    sd, ftp, fmt = take(args, '--sd'), take(args, '--ftp'), take(args, '--sd-format', 'auto')
+    if sd and ftp:
+        sys.exit(HELP)
+    ports = built()
+    names = args or list(ports)
+    for name in names:
+        if name not in ports or 'switch2' not in ports[name][2] or not os.path.isdir(f'{ROOT}/build/{name}_nsp/exefs'):
+            sys.exit(f'{name}: no port of that name is built here.  {ME} list  names them.')
+    if not names:
+        sys.exit(f'No port is built here yet:  {ME} make <game> ...')
+    need([FOR_2, 'devkitA64 (the compiler)', 'elf2nro and nacptool (switch-tools)'])
+    phase(1, 2, f'{len(names)} port(s) built again with {TOOL} {VERSION}' + (', and each one\'s program put on the card' if sd or ftp else ''))
+    for k, name in enumerate(names):
+        print(f'\n-- {k + 1} of {len(names)}: {name} ({ports[name][0]})')
+        run([PY, f'{ROOT}/tools/build.py', f'{ROOT}/build/{name}_nsp/exefs', '--name', name, '--target', 'switch2'])
+        if sd or ftp:
+            run([PY, f'{ROOT}/tools/install.py', name, '--target', 'switch2', '--sd-format', fmt, '--no-romfs'] + (['--sd', sd] if sd else ['--ftp', ftp]))
+    phase(2, 2, f'done: {len(names)} port(s) built again' + ('; their programs are on the card' if sd or ftp else
+                                                             f'. To put one on a card:  {ME} install <name> --sd <drive> --nro-only'))
+
+
 def cmd_identity(args):
     """A port's name, version and icon (tools/control.py), and the port built again with them, and installed if a card is given."""
     if not args:
@@ -447,6 +476,8 @@ def main():
         cmd_install(args)
     elif cmd == 'identity' and SWITCH2:
         cmd_identity(args)
+    elif cmd == 'remake' and SWITCH2:
+        cmd_remake(args)
     elif cmd == 'list':
         for name, (title, version, targets) in built().items():
             print(f'{name}: {title} {version}' + (f' ({", ".join(targets)})' if EDITION == 'dev' else ''))

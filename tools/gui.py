@@ -41,7 +41,8 @@ TARGETS = {'switch': 'Switch', 'switch2': 'Switch 2', 'both': 'both'}
 # the steps of each thing done, as nxrelink.py counts them: a Switch game's, and a Switch 2 game's (which is built from its dump in one)
 STEPS = {'make+install': ['Extract', 'Build', 'Copy and verify', 'Done'], 'make': ['Extract', 'Build', 'Done'],
          'make2+install': ['Build', 'Copy and verify', 'Done'], 'make2': ['Build', 'Done'],
-         'install': ['Copy and verify', 'Done'], 'check': ['Extract the code', 'Check'], 'setup': ['Check what is needed']}
+         'install': ['Copy and verify', 'Done'], 'check': ['Extract the code', 'Check'], 'setup': ['Check what is needed'],
+         'remake': ['Build again', 'Done']}
 FOLDER = {'switch': 'nx-relink', 'switch2': 'nx2-relink', 'dev': 'nx-relink (nx2-relink on a Switch 2)'}[EDITION]
 NOT_YET = 'NOT SUPPORTED YET'  # (how the tools begin a refusal that isn't a fault: tools/game2.py)
 
@@ -336,6 +337,13 @@ class App:
         self.nro_btn = ttk.Button(row, text='The program only (the game\'s files are there already)', style='Soft.TButton', command=lambda: self.do_install(True))
         self.nro_btn.pack(side='left', padx=10)
         self.work_buttons += [self.install_btn, self.nro_btn]
+        if EDITION != 'switch':  # (after the tool is updated: every port built again with it, from what was kept of each)
+            again = tk.Frame(c, bg=CARD)
+            again.pack(fill='x', pady=(10, 0))
+            self.remake_btn = ttk.Button(again, text='Build ALL again with this version, and copy the programs', style='Soft.TButton', command=self.do_remake)
+            self.remake_btn.pack(side='left')
+            self.label(again, 'for after the tool is updated: no dump is needed, and the game\'s files on the card stay', soft=True).pack(side='left', padx=10)
+            self.work_buttons.append(self.remake_btn)
         self.label(c, f'Uses the card chosen in "New port" (step {self.card_step}).', soft=True).pack(anchor='w', pady=(10, 0))
 
         c = self.card(page, None, 'On the card', 'where a port keeps its things')
@@ -703,6 +711,18 @@ class App:
             return
         self.start('install', ['install', name] + card + ['--target', target] + (['--no-romfs'] if nro_only else []))
 
+    def do_remake(self):
+        if not self.ports:
+            messagebox.showwarning('No port', 'No port is built yet: use "New port" first.')
+            return
+        card = self.card_args(True)
+        if not card:
+            return
+        card = [a for a in card if a != '--long-log']
+        if messagebox.askokcancel('Build all again', f'{len(self.ports)} port(s) will be built again with this version, one after the other, and each one\'s '
+                                                     'program copied to the card. The game\'s files on the card are not touched.'):
+            self.start('remake', ['remake'] + card)
+
     # ---- running a command, and following it
     def busy(self, on):
         for b in self.work_buttons + ([self.deps_fix] if self.deps_fix and self.deps_fix.winfo_exists() else []):
@@ -785,7 +805,8 @@ class App:
             done = {'make+install': on_card, 'make2+install': on_card,
                     'install': 'Done: it is on the card, and what arrived was checked against what was sent.',
                     'make': 'Done: the port is built. It can be installed from "My ports".', 'make2': 'Done: the port is built. It can be installed from "My ports".',
-                    'check': 'Checked: the result is in the details.', 'setup': 'Checked: the result is in the details.'}
+                    'check': 'Checked: the result is in the details.', 'setup': 'Checked: the result is in the details.',
+                    'remake': 'Done: every port is built again, and its program is on the card.'}
             self.headline.configure(text=done[self.kind], fg=GOOD)
             self.bar.configure(style='Good.Horizontal.TProgressbar', mode='determinate', value=1000)
             self.percent.configure(text='')

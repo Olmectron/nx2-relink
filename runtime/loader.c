@@ -136,6 +136,7 @@ static void build_table(void) {
         for (u64 i = 1; i < m->nsyms; i++) {
             const Sym *s = sym_at(m, i);
             if (!s->shndx || (s->info >> 4) == 0) continue;  // undefined here, or local
+            if ((s->other & 3) == 1 || (s->other & 3) == 2) continue;  // (kept to its own module: not for the others to find)
             const char *name = name_of(m, s);
             u32 h = hash_of(name) & table_mask;
             while (table[h].name && strcmp(table[h].name, name)) h = (h + 1) & table_mask;
@@ -415,7 +416,16 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
         } else if (type == R_ABS64 || type == R_GLOB_DAT || type == R_JUMP_SLOT) {
             const Sym *s = sym_at(m, symi);
             const char *name = name_of(m, s);
-            void *v = s->shndx ? (void *)nx2_host(m, s->value) : nx2_symbol(name);
+            // Whose is a symbol that this module defines itself? Its console's loader looks every symbol of the usual visibility up
+            // among all the modules, in their order (the game's own first, its SDK last), and the first to define it is everyone's:
+            // so a game's own `operator new` serves its SDK too, and a thing defined once in a header and built into two modules
+            // (a function's static object, a type's description) is one thing, not two. Given each module's own copy, as this did,
+            // the video player's two halves (one in the SDK, one in a module beside it) each had their own "heap manager": one
+            // was set up and the other asked, and a game ended as it started a film's sound, another as it opened a film
+            // (reports, 2026-11-25). A local symbol, or one its module keeps to itself (hidden, protected), is its module's own.
+            const int kept = s->shndx && ((s->info >> 4) == 0 || (s->other & 3));
+            void *v = kept ? (void *)nx2_host(m, s->value) : nx2_symbol(name);
+            if (!v && s->shndx) v = (void *)nx2_host(m, s->value);
 #ifdef __SWITCH2__
             if (!s->shndx) {  // an import the port answers itself (gl2.c)
                 void *mine = nx2_override(name);
@@ -436,6 +446,11 @@ static void apply_rela(const Nx2Module *m, const Rela *r, u64 count) {
                 continue;
             }
             *p = type == R_JUMP_SLOT ? plt_slot(m, name, v, (u64 *)p) : (u64)v + (u64)r->addend;
+        } else if (type >= 1028 && type <= 1031) {
+            // (a module's thread-local storage: left alone here, as the console's own loader leaves it. The game's SDK fills it in
+            // when the module's start hands the module to its C library; seen done on a console, 2026-11-25.)
+            static u32 said;
+            if (said++ < 4) nx2_log("[load] %s: thread-local storage of its own (relocation type %u): left to the game's SDK, as on its console\n", m->name, (u64)type);
         } else if (type) {
             if (bad_writes++ < 8) nx2_log("[load] %s: relocation type %u isn't handled\n", m->name, (u64)type);
         }

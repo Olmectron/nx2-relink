@@ -153,6 +153,7 @@ python nxrelink.py make "dump folder" --name mygame --update "update folder or n
 | `make <game.nup \| folder>` | Checks the dump and builds the port; with `--sd` or `--ftp`, installs too |
 | `install <name>` | Puts a port already built on a card |
 | `identity <name>` | Gives a port the name, version and icon the homebrew menu shows |
+| `remake [<name> ...]` | Builds every port again (or the ones named) with this version of the tool, from what was kept of each: no dump is needed. With `--sd` or `--ftp`, copies each one's program to the card. **For after you update the tool**; the window has it too, in **My ports** |
 | `list` | The ports already built |
 
 Options of `make`:
