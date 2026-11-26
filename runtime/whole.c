@@ -16,7 +16,8 @@
 //   - at its start, what the SDK reads at the start of a stretch of code to find the module's own header (three words: the module's
 //     first, and where its two headers are, from here);
 //   - the thunks: a system call in the code becomes a branch to one, which calls nx2_svc_entry (svc_entry.s) with the call's number
-//     in w16, as the relinker's thunks do, and goes back.
+//     in w16, as the relinker's thunks do, and goes back. A B instruction reaches ±128 MB; a module whose code is larger than that
+//     has its far system calls' thunks at the end of the code section instead (in the padding before the page-aligned read-only data).
 #ifdef __SWITCH2__
 #include <stdio.h>
 #include <stdlib.h>
@@ -72,21 +73,42 @@ int nx2_map_modules(void) {
         w[12] = (u32)(shift + m->data_off), w[13] = (u32)(rw_end - m->data_off);     // the data
         w[14] = (u32)bss_size;
         memcpy(nro + 0x40, "nx2-recomp:", 11), strncpy((char *)nro + 0x40 + 11, m->name, 20);  // (a name of its own where an NRO has its number)
-        u32 *t = (u32 *)(nro + 0x80);
-        const u64 literal = 0x80 + im->nsvcs * 24ull;
-        for (u32 i = 0; i < im->nsvcs; i++, t += 6) {
-            const u64 site = shift + im->svcs[2 * i], n = im->svcs[2 * i + 1], here = 0x80 + i * 24ull;
-            t[0] = 0xA9BF7BF0;                                             // stp x16, x30, [sp, #-16]!
-            t[1] = 0x52800010 | (u32)n << 5;                               // mov w16, #n
-            t[2] = 0x5800001E | (u32)((literal - (here + 8)) / 4) << 5;    // ldr x30, <nx2_svc_entry's address, after the thunks>
-            t[3] = 0xD63F03C0;                                             // blr x30
-            t[4] = 0xA8C17BF0;                                             // ldp x16, x30, [sp], #16
-            t[5] = 0x14000000 | (u32)(((s64)(site + 4) - (s64)(here + 20)) / 4 & 0x3FFFFFF);  // b <after the call>
+        // (a B instruction reaches ±128 MB; a system call past that in a large module's code has its thunk at the end of the code
+        // section instead, in the padding before the page-aligned read-only data. Without this, the branch's displacement wraps and
+        // the game jumps to the wrong place: an instruction abort with no fault in the log. Star Fox's main, 192 MB; #21.)
+        const s64 b_range = 0x8000000;
+        u32 far_count = 0;
+        for (u32 i = 0; i < im->nsvcs; i++)
+            if ((s64)(shift + im->svcs[2 * i]) - (s64)0x80 >= b_range) far_count++;
+        const u64 far_base = shift + im->text_size;
+        const u64 far_end = far_base + far_count * 24ull + (far_count ? 8 : 0);
+        if (far_end > shift + im->ro_off) {
+            nx2_log("[load] %s: not enough room for %u far thunks (%x available)\n", m->name, (u64)far_count, shift + im->ro_off - far_base);
+            return -1;
+        }
+        const u32 near_count = im->nsvcs - far_count;
+        u32 *t = (u32 *)(nro + 0x80), *tf = (u32 *)(nro + far_base);
+        const u64 near_literal = 0x80 + near_count * 24ull, far_literal = far_base + far_count * 24ull;
+        u32 ni = 0, fi = 0;
+        for (u32 i = 0; i < im->nsvcs; i++) {
+            const u64 site = shift + im->svcs[2 * i], n = im->svcs[2 * i + 1];
+            const int far = (s64)site - (s64)0x80 >= b_range;
+            u32 *p = far ? tf : t;
+            const u64 here = far ? far_base + fi * 24ull : 0x80 + ni * 24ull;
+            const u64 lit = far ? far_literal : near_literal;
+            p[0] = 0xA9BF7BF0;                                             // stp x16, x30, [sp, #-16]!
+            p[1] = 0x52800010 | (u32)n << 5;                               // mov w16, #n
+            p[2] = 0x5800001E | (u32)((lit - (here + 8)) / 4) << 5;        // ldr x30, <nx2_svc_entry's address>
+            p[3] = 0xD63F03C0;                                             // blr x30
+            p[4] = 0xA8C17BF0;                                             // ldp x16, x30, [sp], #16
+            p[5] = 0x14000000 | (u32)(((s64)(site + 4) - (s64)(here + 20)) / 4 & 0x3FFFFFF);  // b <after the call>
             // (SynchronizePreemptionState is left as it is, see tools/relink.py: it is the one call the kernel lets a thread make
             // in the state it is made in, and anything the runtime did around it, a line in the log, ended the program)
             if (n != 0x36) *(u32 *)(nro + site) = 0x14000000 | (u32)(((s64)here - (s64)site) / 4 & 0x3FFFFFF);
+            if (far) { tf += 6; fi++; } else { t += 6; ni++; }
         }
-        *(u64 *)(nro + literal) = (u64)nx2_svc_entry;
+        *(u64 *)(nro + near_literal) = (u64)nx2_svc_entry;
+        if (far_count) *(u64 *)(nro + far_literal) = (u64)nx2_svc_entry;
         nx2_log("[load] %s: to be mapped whole by the loader service: an image of %u KB at %p, %u KB of bss at %p\n", m->name, nro_size >> 10, (u64)nro, bss_size >> 10,
                 (u64)bss);
         nx2_log_flush();
