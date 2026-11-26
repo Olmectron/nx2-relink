@@ -50,7 +50,11 @@ static u64 called(u32 k, u64 a, u64 b, u64 c, u64 d) {
         const u64 now = armGetSystemTick();
         if (since && lines++ < 400) {
             const u64 ms = armTicksToNs(now - since) / 1000000;
-            nx2_log("[nvn] 256 pictures shown in %u ms: %u a second\n", ms, ms ? 256000 / ms : 0);
+            // (and how much of the memory for graphics in the program's name is in use, of what the started-over title has: a
+            // game that ends as it loads a new place with this at its top ended for lack of it)
+            u64 most = 0, held = 0;
+            svcGetInfo(&most, 31, CUR_PROCESS_HANDLE, 0), svcGetInfo(&held, 32, CUR_PROCESS_HANDLE, 0);
+            nx2_log("[nvn] 256 pictures shown in %u ms: %u a second; memory for graphics: %u of %u MB in use\n", ms, ms ? 256000 / ms : 0, held >> 20, most >> 20);
         }
         since = now;
     }
@@ -131,7 +135,7 @@ static void *loader_watched(const char *name) {
 // (gl2.c asks, for a game whose graphics are its own SDK's)
 void *nx2_nvn_watch(const char *name) {
     if (strcmp(name, "nvnBootstrapLoader")) return NULL;
-    FILE *f = fopen(NX2_DIR "nogpu", "rb");
+    FILE *f = fopen(NX2_F("nogpu"), "rb");
     // (the file says which: "submit", "present", or anything else for both)
     if (f) {
         char what[16] = {0};

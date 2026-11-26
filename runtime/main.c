@@ -158,11 +158,15 @@ int main(int argc, char **argv) {
 #ifndef NX2_GAME_APART_MB
 #define NX2_GAME_APART_MB 0
 #endif
+#ifdef NX2_GAME_ROOM_MB  // (no figure was given for the game: this much of what there is stays outside what it is told of)
+            const u64 slack = (u64)NX2_GAME_ROOM_MB << 20, apart = (u64)NX2_GAME_APART_MB << 20;
+#else
             const u64 slack = 64ull << 20, apart = (u64)NX2_GAME_APART_MB << 20;
+#endif
             u64 most = (u64)NX2_GAME_MB << 20;
             if (heap_given + apart < most + slack) most = heap_given + apart > slack ? (heap_given + apart - slack) & ~0x1FFFFFull : 0;
             {  // (<folder>/told: the game is told of this many MB, whatever there is. A try, for a game that sizes itself by it.)
-                FILE *t = fopen(NX2_DIR "told", "rb");
+                FILE *t = fopen(NX2_F("told"), "rb");
                 if (t) {
                     unsigned long long mb = 0;
                     if (fscanf(t, "%llu", &mb) == 1 && mb >= 512) most = mb << 20;
@@ -230,48 +234,48 @@ int main(int argc, char **argv) {
     nx2_log_flush();
 
     {
-        FILE *f = fopen(NX2_DIR "debug", "rb");
+        FILE *f = fopen(NX2_F("debug"), "rb");
         if (f) fclose(f), nx2_debug = 1;
         nx2_log("[nx2] the long log is %s (<folder>/debug %s)\n", nx2_debug ? "on" : "off", nx2_debug ? "is there" : "isn't there");
         {  // (<folder>/onecore: the game's threads are left on the core the system gives them, not spread over three; svc.c)
-            FILE *one = fopen(NX2_DIR "onecore", "rb");
+            FILE *one = fopen(NX2_F("onecore"), "rb");
             nx2_onecore = one != NULL;
             if (one) fclose(one);
-            FILE *ipc = fopen(NX2_DIR "ipclog", "rb");
+            FILE *ipc = fopen(NX2_F("ipclog"), "rb");
             nx2_ipclog = ipc != NULL;
             if (ipc) fclose(ipc);
-            FILE *pin = fopen(NX2_DIR "pin", "rb");
+            FILE *pin = fopen(NX2_F("pin"), "rb");
             nx2_pin = pin != NULL;
             if (pin) fclose(pin);
-            FILE *nl = fopen(NX2_DIR "nvnlock", "rb");
+            FILE *nl = fopen(NX2_F("nvnlock"), "rb");
             nx2_nvnlock = nl != NULL;
             if (nl) fclose(nl);
-            FILE *bo = fopen(NX2_DIR "bounce", "rb");
+            FILE *bo = fopen(NX2_F("bounce"), "rb");
             nx2_bounce = bo != NULL;
             if (bo) fclose(bo);
-            FILE *sw = fopen(NX2_DIR "stackwatch", "rb");
+            FILE *sw = fopen(NX2_F("stackwatch"), "rb");
             nx2_stackwatch = sw != NULL;
             if (sw) fclose(sw);
             {  // (<folder>/hold: the game's threads of these numbers, as the log counts them, are made and never started: "54", or
                // "50-54". For a game the system closes with no word: closed all the same, the cause isn't in those threads; svc.c)
-                FILE *hold = fopen(NX2_DIR "hold", "rb");
+                FILE *hold = fopen(NX2_F("hold"), "rb");
                 if (hold) {
                     if (fscanf(hold, "%d-%d", &nx2_hold_from, &nx2_hold_to) == 1) nx2_hold_to = nx2_hold_from;
                     fclose(hold);
                     nx2_log("[nx2] the game's threads %d to %d will be made and not started (<folder>/hold)" "\n", (s64)nx2_hold_from, (s64)nx2_hold_to);
                 }
             }
-            FILE *noplt = fopen(NX2_DIR "noplt", "rb");
+            FILE *noplt = fopen(NX2_F("noplt"), "rb");
             nx2_noplt = noplt != NULL;
             if (noplt) fclose(noplt);
-            FILE *own = fopen(NX2_DIR "ownapplet", "rb");
+            FILE *own = fopen(NX2_F("ownapplet"), "rb");
             nx2_ownapplet = own != NULL;
             if (own) fclose(own);
             // (<folder>/erpt: the console's error reports are looked at and copied to <folder>/reports/, and that is all this run
             // does; erpt.c)
             // (<folder>/control: the game's name, version and icon are asked of the console and written to the card, and that is
             // all this run does; control.c, tools/control.py)
-            FILE *co = fopen(NX2_DIR "control", "rb");
+            FILE *co = fopen(NX2_F("control"), "rb");
             if (co) {
                 void nx2_control_look(void);
                 fclose(co);
@@ -280,7 +284,7 @@ int main(int argc, char **argv) {
                 heap_back();
                 return 0;
             }
-            FILE *er = fopen(NX2_DIR "erpt", "rb");
+            FILE *er = fopen(NX2_F("erpt"), "rb");
             if (er) {
                 void nx2_erpt_look(void);
                 fclose(er);
@@ -298,7 +302,7 @@ int main(int argc, char **argv) {
         {
             {  // (<folder>/ipcbytes: the bytes of what is asked of one service, and answered)
                 extern char nx2_ipcbytes[12];
-                FILE *b = fopen(NX2_DIR "ipcbytes", "rb");
+                FILE *b = fopen(NX2_F("ipcbytes"), "rb");
                 if (b) {
                     size_t n = fread(nx2_ipcbytes, 1, sizeof nx2_ipcbytes - 1, b);
                     while (n && (nx2_ipcbytes[n - 1] == 10 || nx2_ipcbytes[n - 1] == 13 || nx2_ipcbytes[n - 1] == ' ')) n--;
@@ -308,7 +312,7 @@ int main(int argc, char **argv) {
             }
             {  // (<folder>/refuse: services treated as refused, to see the port's stand-in for one at work)
                 extern char nx2_refuse[200];
-                FILE *refuse = fopen(NX2_DIR "refuse", "rb");
+                FILE *refuse = fopen(NX2_F("refuse"), "rb");
                 if (refuse) {
                     const size_t n = fread(nx2_refuse, 1, sizeof nx2_refuse - 1, refuse);
                     nx2_refuse[n] = 0;
@@ -317,7 +321,7 @@ int main(int argc, char **argv) {
                 }
             }
             extern char nx2_slow[64];
-            FILE *slow = fopen(NX2_DIR "slow", "rb");
+            FILE *slow = fopen(NX2_F("slow"), "rb");
             if (slow) {
                 size_t n = fread(nx2_slow, 1, sizeof nx2_slow - 1, slow);
                 while (n && (nx2_slow[n - 1] == 10 || nx2_slow[n - 1] == 13 || nx2_slow[n - 1] == ' ')) n--;
@@ -329,7 +333,7 @@ int main(int argc, char **argv) {
             extern char nx2_tracein_module[16];
             extern u64 nx2_tracein[16];
             extern int nx2_tracein_count;
-            FILE *in = fopen(NX2_DIR "tracein", "rb");
+            FILE *in = fopen(NX2_F("tracein"), "rb");
             if (in) {
                 unsigned long long a, b;
                 if (fscanf(in, "%15s", nx2_tracein_module) == 1)
@@ -340,7 +344,7 @@ int main(int argc, char **argv) {
                 {
                     extern u64 nx2_tracebt;
                     extern u32 nx2_tracebt_thread;
-                    FILE *bt = fopen(NX2_DIR "tracebt", "rb");
+                    FILE *bt = fopen(NX2_F("tracebt"), "rb");
                     if (bt) {
                         unsigned long long v = 0, t = 0;
                         const int got = fscanf(bt, "%llx %llx", &v, &t);
@@ -350,7 +354,7 @@ int main(int argc, char **argv) {
                     }
                 }
                 extern u64 nx2_traceat;
-                FILE *at = fopen(NX2_DIR "traceat", "rb");
+                FILE *at = fopen(NX2_F("traceat"), "rb");
                 if (at) {
                     unsigned long long v = 0;
                     if (fscanf(at, "%llx", &v) == 1) nx2_traceat = v;
@@ -358,7 +362,7 @@ int main(int argc, char **argv) {
                 }
             }
         }
-        f = fopen(NX2_DIR "trace", "rb");
+        f = fopen(NX2_F("trace"), "rb");
         if (f) {
             size_t n = fread(nx2_trace, 1, sizeof nx2_trace - 1, f);
             while (n && (nx2_trace[n - 1] == '\n' || nx2_trace[n - 1] == '\r' || nx2_trace[n - 1] == ' ')) n--;
@@ -425,7 +429,7 @@ int main(int argc, char **argv) {
         // its start, on the layer the system gives the program, and the SDK then opens that layer too. On a Switch the host's
         // side of all this is closed before the game starts (appletExit, above); here the window and the host's display session
         // are, so that the layer is the SDK's alone, as it is the game's on its console.
-        FILE *native = fopen(NX2_DIR "native", "rb");
+        FILE *native = fopen(NX2_F("native"), "rb");
         int is_native = native != NULL;
         if (native) fclose(native);
 #ifdef NX2_GAME_MB
@@ -436,6 +440,9 @@ int main(int argc, char **argv) {
             __nx_win_exit();
             nx2_log("[nx2] the host library's window and display session are closed: the game's SDK opens its own\n");
             nx2_log_flush();
+            // (The memory for graphics that is in use before the game starts, some 19 MB of what the started-over title has, is not
+            // the host library's to give back: closing its window, and its session with the graphics driver, left it as it was;
+            // measured, 2026-11-25.)
         }
     }
     nx2_host_capture();

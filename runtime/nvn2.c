@@ -624,7 +624,7 @@ static int try_fbolimit = -1, try_fboskip = -1;  // (fbolimit=N: nothing is draw
 static int try_trail, try_nomips, try_nocompressed, try_noupload, try_nooffscreen, try_noclear, try_nodepth, try_nostorage;
 static void try_read(void) {
     static char text[256];
-    FILE *f = fopen(NX2_DIR "try", "rb");
+    FILE *f = fopen(NX2_F("try"), "rb");
     if (!f) return;
     const size_t n = fread(text, 1, sizeof text - 1, f);
     fclose(f);
@@ -671,18 +671,18 @@ static void h_start(int w, int h) {
     if (started) return;
     started = 1;
     {
-        FILE *file = fopen(NX2_DIR "astc", "rb");
+        FILE *file = fopen(NX2_F("astc"), "rb");
         astc_given = file != NULL;
         if (file) fclose(file);
         nx2_log("[nvn] ASTC textures: %s\n", astc_given ? "given to OpenGL (<folder>/astc is there)" : "left empty (no <folder>/astc)");
         try_read();
     }
     {
-        FILE *file = fopen(NX2_DIR "vulkan", "rb");
+        FILE *file = fopen(NX2_F("vulkan"), "rb");
         if (file) {
             fclose(file);
             nx2_log("[nvn] <folder>/vulkan is there: the port's own OpenGL over Vulkan is drawn with, not the host's\n");
-            glvk_start(w, h, NX2_DIR "shaders.spv");
+            glvk_start(w, h, NX2_F("shaders.spv"));
         }
     }
     if (nx2_vulkan) {
@@ -859,7 +859,7 @@ static void pack_open(void) {
     static int tried;
     if (tried) return;
     tried = 1;
-    FILE *f = fopen(NX2_DIR "shaders.bin", "rb");
+    FILE *f = fopen(NX2_F("shaders.bin"), "rb");
     u32 head[4] = {0};
     if (!f || fread(head, 4, 4, f) != 4 || head[0] != 0x5332584E /* NX2S */ || head[1] != 1) {
         nx2_log("[nvn] the translated shaders (<folder>/shaders.bin): %s\n", f ? "not a file of this port's" : "not there");
@@ -947,7 +947,7 @@ static int build_translated(Program *p, int id) {
         static int skips = -1;
         if (skips < 0) {
             skips = 0;
-            FILE *f = fopen(NX2_DIR "skip", "r");
+            FILE *f = fopen(NX2_F("skip"), "r");
             unsigned long long v = 0;
             while (f && skips < 64 && fscanf(f, "%llx", &v) == 1) skip[skips++] = v;
             if (f) fclose(f);
@@ -979,7 +979,7 @@ static int build_translated(Program *p, int id) {
         // (the first few such are written to the card, <folder>/missing-N-v.bin and -f.bin, to be looked for in the game's files)
         for (int k = 0; missing <= 4 && k < 2; k++) {
             char name[64];
-            snprintf(name, sizeof name, NX2_DIR "missing-%u-%c.bin", missing, k ? 'f' : 'v');
+            snprintf(name, sizeof name, NX2_F("missing-%u-%c.bin"), missing, k ? 'f' : 'v');
             FILE *f = p->raw[k] ? fopen(name, "wb") : NULL;
             if (f) {
                 fwrite(p->raw[k], 1, p->raw_size[k], f);
@@ -1006,7 +1006,7 @@ static int build_translated(Program *p, int id) {
     char *instead[2] = {NULL, NULL};
     for (int k = 0; k < 2 && nx2_debug; k++) {
         char name[64];
-        snprintf(name, sizeof name, NX2_DIR "shader/%016llx.glsl", (unsigned long long)p->key[k]);
+        snprintf(name, sizeof name, NX2_F("shader/%016llx.glsl"), (unsigned long long)p->key[k]);
         FILE *f = fopen(name, "rb");
         if (!f) continue;
         fseek(f, 0, SEEK_END);

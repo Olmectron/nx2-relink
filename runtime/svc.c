@@ -1089,8 +1089,18 @@ int nx2_svc(u64 *r, u32 n) {
                     for (const char *c = parts[k]; *c && n + 1 < sizeof why; c++) why[n++] = *c;
                 why[n] = 0;
                 nx2_crash(why);
-            } else
-                nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked for)");
+            } else {
+                // (a game that ends itself with memory left that it wasn't told of may have ended for lack of it: an allocator of
+                // its own, sized by what it was told, that ran out; two reports, 2026-11-25. Said with the end, as a thing to try.)
+                u64 total = 0, used = 0;
+                svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0), svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+                if (heap_max && heap_max < (8992ull << 20) && total > used + (256ull << 20))
+                    nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked "
+                              "for). The console still had memory the game wasn't told of: if the game ended for lack of memory, a larger figure "
+                              "may let it run (Advanced options, memory: 8992)");
+                else
+                    nx2_crash("the game's SDK ended the program itself (an abort: the lines before \"Break\" at the log's end say what it had just asked for)");
+            }
         }
         nx2_exit();
     }

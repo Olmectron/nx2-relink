@@ -92,7 +92,14 @@ def build(exefs, name, target, work, out_dir, shown=None):
             print(f'{name}: its port is for its own console alone, not for a Switch')
             return None
         if not any(x.startswith('-DNX2_GAME_MB=') for x in extra):
-            extra.append(f'-DNX2_GAME_MB={int(info.get("heap") or 7800)}')
+            # (With no figure given for it, a game that keeps nothing apart is told of what the port really has less 400 MB,
+            # 8192 at most: some take all they are told of in one piece and then map a little more as they run, and some size
+            # an allocator of their own by the figure and end themselves when it is too small. Told of 7800, as every such game
+            # was while a port kept more for itself, two ended so and ran with a larger figure; reports, 2026-11-25.)
+            if int(info.get('heap') or 7800) == 7800 and not info.get('apart'):
+                extra += ['-DNX2_GAME_MB=8192', '-DNX2_GAME_ROOM_MB=400']
+            else:
+                extra.append(f'-DNX2_GAME_MB={int(info.get("heap") or 7800)}')
         if info.get('apart') and not any(x.startswith('-DNX2_GAME_APART_MB=') for x in extra):
             extra.append(f'-DNX2_GAME_APART_MB={int(info["apart"])}')  # (address space the game keeps apart from its heap: tools/heapdef.py)
         # (the memory for graphics the game's own description asks for, main.npdm: the runtime says so when the title a port is

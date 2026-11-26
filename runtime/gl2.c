@@ -33,7 +33,7 @@ void nx2_gl_config(void) {
         // to the error stream, which a homebrew program has nowhere to show. Asked of a game, whose pictures stop
         // with the driver saying that its work for the GPU failed and nothing of why; 2026-11-23. loader.c's watcher has the file
         // put on the card every few seconds.)
-        if (freopen(NX2_DIR "stderr.txt", "w", stderr)) setvbuf(stderr, NULL, _IONBF, 0);
+        if (freopen(NX2_F("stderr.txt"), "w", stderr)) setvbuf(stderr, NULL, _IONBF, 0);
         setenv("MESA_DEBUG", "1", 1);
         setenv("MESA_LOG_LEVEL", "debug", 1);
         fprintf(stderr, "nx2: the host's own messages follow\n");
@@ -321,7 +321,7 @@ void nx2_vsync_tick(void) {
 static void *font_data;
 static u64 font_size;
 static void font_load(void) {  // (as the host)
-    FILE *f = fopen(NX2_DIR "font.ttf", "rb");
+    FILE *f = fopen(NX2_F("font.ttf"), "rb");
     if (f) {
         fseek(f, 0, SEEK_END);
         const long n = ftell(f);
@@ -759,7 +759,7 @@ void *nx2_override(const char *name) {
         static int tries = -1;
         if (tries < 0) {
             tries = 0;
-            FILE *f = fopen(NX2_DIR "nfptry", "rb");
+            FILE *f = fopen(NX2_F("nfptry"), "rb");
             if (f) {
                 char t[16] = {0};
                 fread(t, 1, sizeof t - 1, f);
@@ -787,7 +787,7 @@ void *nx2_override(const char *name) {
     if (!strcmp(name, "_ZN2nn4util9VSNPrintfEPcmPKcSt9__va_list")) {
         static int said = -1;
         if (said < 0) {
-            FILE *f = fopen(NX2_DIR "said", "rb");
+            FILE *f = fopen(NX2_F("said"), "rb");
             said = f != NULL;
             if (f) {
                 size_t got = fread(said_filter, 1, sizeof said_filter - 1, f);
@@ -808,7 +808,7 @@ void *nx2_override(const char *name) {
     // is made for this console's graphics processor. Nothing of those is replaced, and the host's own are never started.
     static int native = -1;
     if (native < 0) {
-        FILE *f = fopen(NX2_DIR "native", "rb");
+        FILE *f = fopen(NX2_F("native"), "rb");
         native = f != NULL;
         if (f) fclose(f);
 #ifdef NX2_GAME_MB

@@ -109,7 +109,7 @@ static void net_watch(void *arg) {
 }
 
 void nx2_net_watch(void) {
-    FILE *f = fopen(NX2_DIR "netwatch", "rb");
+    FILE *f = fopen(NX2_F("netwatch"), "rb");
     if (!f) return;
     fclose(f);
     Result rc = socketInitializeDefault();

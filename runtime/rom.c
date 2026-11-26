@@ -6,6 +6,8 @@
 // it can be in parts instead, <name>.romfs.00, .01, ..., all of one size but the last.)
 // On a game's thread: system calls and the host library's service calls only (they use the thread's message buffer, nothing else).
 #include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
 #include <switch.h>
 
 #include "nx2.h"
@@ -78,6 +80,7 @@ static void image_whole(Image *im) {
     else
         nx2_log("[rom] the image is whole by its own header (%u MB)\n", end >> 20);
 }
+static void mods_start(void);
 void nx2_rom_open(void) {
     static char path[FS_MAX_PATH] = NX2_HOME "/romfs.bin";
     image_open(&images[0], path);
@@ -224,6 +227,9 @@ static u32 mods_keep(const char *text) {  // a string kept in mods.paths: where
     return at;
 }
 // (at the start, before the game has a thread: the C library's memory is the host's to use here)
+// (the game loader's: the image is its own making, files of a mods folder among the rest: read through game.c)
+static void mods_start(void) {
+}
 static void mods_open(Image *im) {
     static const char folder[] = NX2_HOME "/mods";
     FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
@@ -551,6 +557,7 @@ int nx2_aoc_ipc(u8 *m) {
 // system has the folder put before it. A request to it that can't be read here is refused, never passed on as it is: it would act on
 // the card's root.
 #define SAVE_DIR NX2_HOME "/save"
+#define SAVE_UP NX2_HOME
 #define SAVE_OBJECTS 8
 static u32 save_objects[SAVE_OBJECTS];
 static u32 save_logged;
@@ -581,7 +588,8 @@ static u32 lend(u32 real, int fs) {
 void nx2_save_open(void) {
     FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
     if (!sd) return;
-    static const char up[FS_MAX_PATH] = NX2_HOME, dir[FS_MAX_PATH] = SAVE_DIR;
+    static char up[FS_MAX_PATH], dir[FS_MAX_PATH];
+    strncpy(up, SAVE_UP, sizeof up - 1), strncpy(dir, SAVE_DIR, sizeof dir - 1);
     fsFsCreateDirectory(sd, up);
     const u32 rc = fsFsCreateDirectory(sd, dir);
     nx2_log("[save] the game's saved data is kept in sdmc:%s (made: %x)\n", dir, (u64)rc);
@@ -667,6 +675,17 @@ int nx2_save_before(u8 *m, char (*paths)[0x301], u32 *handle) {
     for (int k = 0; k < SAVE_OBJECTS; k++)
         if (object && save_objects[k] == object) mine = k;
     if (mine < 0) {
+        // (How large the game's "cache storage" is, command 34: a second kind of saved data, which a game mounts like the first
+        // (command 51, below: it is given the same folder) and then asks the size of. The system has none for the title a port
+        // is started over, says "not found" (7d402), and the game's SDK ends the program on that; report, 2026-11-25. Answered
+        // here: there is as much as a game could ask, 2 GB of data and as much again of journal.)
+        if (kind == 1 && has_cmd && cmd == 34) {
+            u8 sizes[16] = {0};
+            sizes[3] = 0x80, sizes[11] = 0x80;
+            nx2_log("[save] the SDK asks how large the game's cache storage is (command 34): told of 2 GB; it is kept with the saved data, in %s" "\n", SAVE_DIR);
+            answer(m, 0, sizes, sizeof sizes, 0);
+            return 3;
+        }
         if (kind != 1 || !has_cmd || (cmd != 51 && cmd != 53)) return 0;  // OpenSaveDataFileSystem, and the read-only one
         if (host_fs) {
             const u32 id = lend(host_fs->object_id, 1);

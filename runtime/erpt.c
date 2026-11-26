@@ -100,8 +100,8 @@ void nx2_erpt_look(void) {
     }
     nx2_log_flush();
     if (!size) return;
-    mkdir(NX2_DIR "reports", 0777);
-    FILE *f = fopen(NX2_DIR "reports/list.bin", "wb");
+    mkdir(NX2_F("reports"), 0777);
+    FILE *f = fopen(NX2_F("reports/list.bin"), "wb");
     if (f) fwrite(list, 1, size, f), fclose(f);
     const u32 count = *(const u32 *)list;
     nx2_log("[erpt] %u reports in the list\n", (u64)count);
@@ -124,7 +124,7 @@ void nx2_erpt_look(void) {
         nx2_log("[erpt] report %u: opened %x, its size %x: %d bytes\n", (u64)k, (u64)r, (u64)r2, length);
         if (R_SUCCEEDED(r)) {
             char name[64];
-            snprintf(name, sizeof name, NX2_DIR "reports/%02u.bin", (unsigned)k);
+            snprintf(name, sizeof name, NX2_F("reports/%02u.bin"), (unsigned)k);
             f = fopen(name, "wb");
             for (s64 done = 0; f && done < 0x100000;) {
                 u32 got = 0;

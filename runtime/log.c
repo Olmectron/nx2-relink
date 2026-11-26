@@ -98,7 +98,7 @@ static void flush(void) {
     mutexLock(&flush_lock);
     const u64 in = __atomic_load_n(&ring_in, __ATOMIC_SEQ_CST);
     if (in - ring_out > RING) ring_out = in - RING;
-    FILE *f = in == ring_out ? NULL : fopen(NX2_DIR "log.txt", "a");
+    FILE *f = in == ring_out ? NULL : fopen(NX2_F("log.txt"), "a");
     if (!f) {
         mutexUnlock(&flush_lock);
         return;
@@ -143,7 +143,7 @@ void nx2_crash_now(const char *why) {
 void nx2_closing(void) { closing = 1; }
 
 static void crash_file(const char *why, const char *detail, const char *log_path) {
-    FILE *out = fopen(NX2_DIR "crash.txt", "w");
+    FILE *out = fopen(NX2_F("crash.txt"), "w");
     if (!out) return;
     const u32 hos = hosversionGet();
     const time_t now = time(NULL);
@@ -198,7 +198,7 @@ static void mode_said(void) {
 static void writer_main(void *arg) {
     (void)arg;
     int closed_said = 0;
-    for (u32 round = 0;; round++) {
+    for (;;) {
         svcSleepThread(waiting ? 500000 : 50000000);
         const int q = quit;
 #ifdef __SWITCH2__
@@ -210,17 +210,17 @@ static void writer_main(void *arg) {
 #endif
         flush();
         if (crash_now) {
-            crash_file(crash_why, NULL, NX2_DIR "log.txt");
-            remove(NX2_DIR "running");
+            crash_file(crash_why, NULL, NX2_F("log.txt"));
+            remove(NX2_F("running"));
             crash_now = 0;
         }
         if (closing && !closed_said) {  // (the user closes the game: the system may end the program at any moment from here)
             closed_said = 1;
-            remove(NX2_DIR "running");
+            remove(NX2_F("running"));
         }
         if (q) {
-            if (crash_why) crash_file(crash_why, NULL, NX2_DIR "log.txt");
-            remove(NX2_DIR "running");
+            if (crash_why) crash_file(crash_why, NULL, NX2_F("log.txt"));
+            remove(NX2_F("running"));
             written = 1;
             for (;;) svcSleepThread(1000000000);
         }
@@ -230,7 +230,7 @@ static void writer_main(void *arg) {
 void nx2_log_start(void) {
     mkdir("sdmc:/" NX2_TOOL, 0777);
     mkdir("sdmc:" NX2_HOME, 0777);
-    FILE *left = fopen(NX2_DIR "running", "rb");
+    FILE *left = fopen(NX2_F("running"), "rb");
     const char *before = NULL;  // (what is said of the run before, in this run's log)
     if (left) {  // the run before ended with no word
         long long began = 0;
@@ -239,15 +239,15 @@ void nx2_log_start(void) {
 #ifdef __SWITCH2__
         char record[160] = "";
         struct stat st;
-        const s64 ended = began && !stat(NX2_DIR "log.txt", &st) && st.st_mtime > began ? (s64)st.st_mtime : 0;
+        const s64 ended = began && !stat(NX2_F("log.txt"), &st) && st.st_mtime > began ? (s64)st.st_mtime : 0;
         int nx2_erpt_last(char *to, size_t size, s64 from, s64 to_time);
         const int fault = began ? nx2_erpt_last(record, sizeof record, began, ended) : -1;
         if (fault > 0) {
-            crash_file("the console closed the program for a fault", record, NX2_DIR "log.txt");
+            crash_file("the console closed the program for a fault", record, NX2_F("log.txt"));
             before = "[nx2] the run before this one ended in a fault, by the console's own record: <folder>/crash.txt has its log" "\n";
         } else if (fault < 0) {
             crash_file("the run ended with no word to the program, and the console's records couldn't be asked: it was closed from the HOME menu, "
-                       "or the console was turned off, or it ended in a fault", NULL, NX2_DIR "log.txt");
+                       "or the console was turned off, or it ended in a fault", NULL, NX2_F("log.txt"));
             before = "[nx2] the run before this one ended with no word; the console's records couldn't be asked: <folder>/crash.txt has its log" "\n";
         } else
             before = "[nx2] the run before this one was closed from outside (the HOME menu, or the console turned off): the console recorded no fault" "\n";
@@ -257,9 +257,9 @@ void nx2_log_start(void) {
         before = "[nx2] the run before this one was closed from outside (the HOME menu, or the console turned off)" "\n";
 #endif
     }
-    remove(NX2_DIR "log.prev.txt");
-    rename(NX2_DIR "log.txt", NX2_DIR "log.prev.txt");
-    FILE *mark = fopen(NX2_DIR "running", "wb");
+    remove(NX2_F("log.prev.txt"));
+    rename(NX2_F("log.txt"), NX2_F("log.prev.txt"));
+    FILE *mark = fopen(NX2_F("running"), "wb");
     if (mark) {
         fprintf(mark, "%lld" "\n", (long long)time(NULL));
         fclose(mark);
@@ -271,7 +271,7 @@ void nx2_log_start(void) {
 // The program goes back to where it was started from (main's return): its run ended well.
 void nx2_log_end(void) {
     flush();
-    remove(NX2_DIR "running");
+    remove(NX2_F("running"));
 }
 
 // (callable from a thread of the game's: only system calls here)

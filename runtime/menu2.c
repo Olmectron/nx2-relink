@@ -212,17 +212,17 @@ void nx2_menu_draw(const Nx2Menu *m) {
 void nx2_menu_debug(int on) {
     int ok = 1;
     if (on) {
-        FILE *f = fopen(NX2_DIR "debug", "w");
+        FILE *f = fopen(NX2_F("debug"), "w");
         ok = f != NULL;
         if (f) fclose(f);
     } else {
-        remove(NX2_DIR "debug");
+        remove(NX2_F("debug"));
     }
     nx2_debug = on;
     nx2_log("[menu] the long log is turned %s (<folder>/debug %s)\n", on ? "on" : "off", !ok ? "couldn't be written" : on ? "written" : "removed");
 }
 void nx2_menu_save(int res_h) {
-    FILE *f = fopen(NX2_DIR "settings.cfg", "w");
+    FILE *f = fopen(NX2_F("settings.cfg"), "w");
     if (f) {
         fprintf(f, "res=%d\n", res_h);
         fclose(f);
@@ -231,7 +231,7 @@ void nx2_menu_save(int res_h) {
 }
 int nx2_menu_load(void) {
     int res = 1080;
-    FILE *f = fopen(NX2_DIR "settings.cfg", "r");
+    FILE *f = fopen(NX2_F("settings.cfg"), "r");
     if (f) {
         if (fscanf(f, "res=%d", &res) != 1 || (res != 720 && res != 1080)) res = 1080;
         fclose(f);

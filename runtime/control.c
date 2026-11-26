@@ -16,7 +16,7 @@
 
 void nx2_control_look(void) {
     char text[32] = {0};
-    FILE *f = fopen(NX2_DIR "control", "rb");
+    FILE *f = fopen(NX2_F("control"), "rb");
     if (!f) return;
     const size_t got = fread(text, 1, sizeof text - 1, f);
     fclose(f);
@@ -57,7 +57,7 @@ void nx2_control_look(void) {
     nsExit();
     if (R_SUCCEEDED(rc) && size >= sizeof data.nacp && size <= sizeof all) {
         char name[64];
-        snprintf(name, sizeof name, NX2_DIR "control-%016llx.bin", (unsigned long long)id);
+        snprintf(name, sizeof name, NX2_F("control-%016llx.bin"), (unsigned long long)id);
         f = fopen(name, "wb");
         if (f) {
             fwrite(&data, 1, size, f);

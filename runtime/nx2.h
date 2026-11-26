@@ -27,6 +27,7 @@ typedef int32_t s32;
 #endif
 #define NX2_HOME "/" NX2_TOOL "/" NX2_NAME  // (as the file system service is given it)
 #define NX2_DIR "sdmc:" NX2_HOME "/"
+#define NX2_F(name) (NX2_DIR name)       // a file of the port's folder
 
 // One module of the game. Addresses are the module's own (0 = its first byte of code) unless they are pointers. Code and read-only
 // data are at text, as they were; data and bss, which followed them at data_off, are at data.

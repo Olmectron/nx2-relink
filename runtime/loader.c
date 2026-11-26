@@ -228,7 +228,7 @@ static void peek_values(u64 *v, int *bad) {
 static void nx2_peek_say(int look) {  // (the watcher's thread: the file is read here, with the C library)
     if (peek_count < 0) {
         peek_count = 0;
-        FILE *f = fopen(NX2_DIR "peek", "rb");
+        FILE *f = fopen(NX2_F("peek"), "rb");
         if (f) {
             int n = 0;
             if (fscanf(f, "%15s", peek_module) == 1)
@@ -671,7 +671,7 @@ static void watch(void *arg) {
             static int pause_at = -1, from, to = 95;
             if (pause_at < 0) {
                 pause_at = 0;
-                FILE *f = fopen(NX2_DIR "pause", "rb");
+                FILE *f = fopen(NX2_F("pause"), "rb");
                 if (f) {
                     if (fscanf(f, "%d %d-%d", &pause_at, &from, &to) < 1) pause_at = 0;
                     fclose(f);
@@ -793,7 +793,7 @@ void nx2_start(u32 main_thread) {
         nx2_pac_test();
         extern void nx2_net_watch(void);  // (netwatch.c)
         nx2_net_watch();
-        FILE *test = fopen(NX2_DIR "faulttest", "rb");  // (a fault made on purpose, to see whether one reaches the log at all)
+        FILE *test = fopen(NX2_F("faulttest"), "rb");  // (a fault made on purpose, to see whether one reaches the log at all)
         if (test) {
             fclose(test);
             nx2_log("[fault] <folder>/faulttest is there: a fault is made now\n");
@@ -802,7 +802,7 @@ void nx2_start(u32 main_thread) {
     }
 #endif
     {  // (<folder>/nowatch: no looks at all, for a game the looking itself may end)
-        FILE *off = fopen(NX2_DIR "nowatch", "rb");
+        FILE *off = fopen(NX2_F("nowatch"), "rb");
         if (off) fclose(off);
         else if (R_SUCCEEDED(threadCreate(&watcher, watch, NULL, NULL, 0x8000, 0x2B, -2))) threadStart(&watcher);
     }

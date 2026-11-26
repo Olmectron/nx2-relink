@@ -284,11 +284,13 @@ The window has the same under **Advanced**, with a confirmation before a port is
 
 **Memory.** No amount has to be known for each game, and none is guessed. The port sets nothing aside: when it starts it gives
 back to the console nearly all the memory it received, and the game takes it as it asks for it, as on its console. The one number
-is the most the game is told there is. The console gives an application 9120 MB; the homebrew loader and the port keep about
-1100 of them, which leaves about 8000, and by default a game is told of 7800. One kind of game is told of more, the console's
-own 8992: a game whose own table of heaps (read from its files when the port is made) keeps a stretch of address space apart
-from its heap. Such a game sizes its heap by the console's full figure, and with less its heaps don't fit. A smaller number
-makes a game that sizes itself by it take less; a larger one than there is is cut down to what there is.
+is the most the game is told there is. The console gives an application about 9100 MB; the homebrew loader and the port keep
+400 to 700 of them, by the size of the game's program. By default a game is told of what is left less 400 MB, and of 8192 at
+most: some games take all they are told of and then need a little more. One kind of game is told of more, the console's own
+8992: a game whose own table of heaps (read from its files when the port is made) keeps a stretch of address space apart from
+its heap. Such a game sizes its heap by the console's full figure, and with less its heaps don't fit. A number you give is
+used as it is: a smaller one makes a game that sizes itself by it take less; a larger one than there is is cut down to what
+there is. **A game that closes itself or aborts right at its start may want more: try 8992.**
 
 **Whole modules.** The console's loader maps eight images for a program. A game that loads no modules of its own as it runs has
 all of them kept whole (`auto` does this). One that does load some has only the ones that must be whole kept so (`main` and

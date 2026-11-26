@@ -52,7 +52,7 @@ static void pac_watch(void *arg) {
 }
 
 void nx2_pac_test(void) {
-    FILE *f = fopen(NX2_DIR "pactest", "rb");
+    FILE *f = fopen(NX2_F("pactest"), "rb");
     if (!f) return;
     fclose(f);
     if (R_SUCCEEDED(threadCreate(&pac_thread, pac_watch, NULL, NULL, 0x4000, 0x2C, -2))) {

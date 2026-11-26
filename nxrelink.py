@@ -20,7 +20,7 @@ PY = sys.executable
 ME = 'python nxrelink.py'
 SWITCH, SWITCH2 = EDITION in ('switch', 'dev'), EDITION in ('switch2', 'dev')
 FOR_2 = 'every game' if EDITION == 'switch2' else 'a Switch 2'  # (what the newer console's kit is said to be for: all of nx2-relink's games)
-MEMORY = (2048, 8992, 7800)  # (the least and the most --memory takes, and what a port has when it isn't given; MB)
+MEMORY = (2048, 8992, 8192)  # (the least and the most --memory takes, and the most a port is told of when it isn't given; MB)
 
 HELP_SWITCH = f"""{TOOL} {VERSION}: a Switch game you own, made into a homebrew program (.nro) for a Switch.
 

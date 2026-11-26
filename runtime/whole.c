@@ -108,7 +108,7 @@ int nx2_map_modules(void) {
     {
         // <folder>/rocount: how many images the loader service takes for one program, measured: three-page images of nothing are
         // asked for until one is refused, and all of them are taken away again.
-        FILE *probe = fopen(NX2_DIR "rocount", "rb");
+        FILE *probe = fopen(NX2_F("rocount"), "rb");
         if (probe) {
             fclose(probe);
             static u64 put_at[64];
