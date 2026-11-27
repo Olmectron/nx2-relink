@@ -99,7 +99,7 @@ def main():
         try:
             ftp.connect(host, int(port or 5000), timeout=60)
             ftp.login()
-        except (OSError, ftplib.all_errors) as e:
+        except (OSError, *ftplib.all_errors) as e:
             sys.exit(f'No FTP server answers at {where} ({e}). Is it open on the console?')
         home = f'/{"nx2-relink" if info.get("switch2") else "nx-relink"}/{name}'  # (the port's folder: runtime/nx2.h)
         there = [n.split('/')[-1] for n in ftp.nlst(home)]

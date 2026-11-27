@@ -3,8 +3,9 @@ can be done from a terminal, and the window shows the command it ran (under "Sho
 
   python nxrelink.py          (or: python tools/gui.py)
 
-Four pages: a new port (the game, what the homebrew menu shows, the card, one button), the ports already built, the settings that
-are seldom touched, and the advanced options, which are behind a warning. Under them, always in view, what is being done: the step
+Five pages: a new port (the game, what the homebrew menu shows, the card, one button), the ports already built, the mods of a
+port's game (tools/mods.py: the ones kept in the card's /mods, put on a port and taken off it), the settings that are seldom touched, and the advanced
+options, which are behind a warning. Under them, always in view, what is being done: the step
 of how many, a bar, how much is left.
 Like the command line, it shows the options of its own console alone (tools/edition.py): a Switch's in nx-relink, a Switch 2's in
 nx2-relink.
@@ -42,7 +43,7 @@ TARGETS = {'switch': 'Switch', 'switch2': 'Switch 2', 'both': 'both'}
 STEPS = {'make+install': ['Extract', 'Build', 'Copy and verify', 'Done'], 'make': ['Extract', 'Build', 'Done'],
          'make2+install': ['Build', 'Copy and verify', 'Done'], 'make2': ['Build', 'Done'],
          'install': ['Copy and verify', 'Done'], 'check': ['Extract the code', 'Check'], 'setup': ['Check what is needed'],
-         'remake': ['Build again', 'Done']}
+         'remake': ['Build again', 'Done'], 'mods': ['Copy and verify', 'Done']}
 FOLDER = {'switch': 'nx-relink', 'switch2': 'nx2-relink', 'dev': 'nx-relink (nx2-relink on a Switch 2)'}[EDITION]
 NOT_YET = 'NOT SUPPORTED YET'  # (how the tools begin a refusal that isn't a fault: tools/game2.py)
 
@@ -140,10 +141,16 @@ class App:
         self.nro_only = tk.BooleanVar(value=False)
         self.memory, self.whole, self.long_log = tk.StringVar(value=''), tk.StringVar(value='auto'), tk.BooleanVar(value=False)
         self.aocs = []
+        self.also = []  # (sources of the user's own built into a port: the advanced page)
+        self.also_text = tk.StringVar(value='none')
+        self.mods_again = tk.BooleanVar(value=False)
+        self.mods_dir, self.mods_port = tk.StringVar(value=f'{ROOT}/mods'), tk.StringVar()
+        self.mods_ports, self.mods_rows, self.mods_on, self.mods_asked, self.mods_loose, self.mods_said = {}, {}, [], 0, '', ''
 
         self.status_panel()  # (packed at the bottom first, so the pages take what is left)
         self.body.pack(fill='both', expand=True)
-        for key, text, build in (('new', 'New port', self.page_new), ('ports', 'My ports', self.page_ports), ('settings', 'Settings', self.page_settings),
+        for key, text, build in (('new', 'New port', self.page_new), ('ports', 'My ports', self.page_ports), ('mods', 'Mods', self.page_mods),
+                                 ('settings', 'Settings', self.page_settings),
                                  ('advanced', 'Advanced', self.page_advanced)):
             lab = tk.Label(self.tabs_bar, text=text, bg=PRIMARY_DARK, fg='#C5CAE9', font=(FONT, 10, 'bold'), padx=18, pady=9, cursor='hand2')
             lab.pack(side='left')
@@ -217,6 +224,8 @@ class App:
         self.tab_labels[key].configure(bg=BG, fg=PRIMARY_DARK)
         if key == 'ports':
             self.refresh_ports()
+        if key == 'mods' and not self.mods_rows:
+            self.mods_list()
 
     # ---- the pages
     def page_new(self, page):
@@ -355,6 +364,267 @@ class App:
                       '   mods/          optional: a file put here, at the path it has in the game, is used in place of the game\'s own.',
                    justify='left').pack(anchor='w')
 
+    def page_mods(self, page):
+        c = self.card(page, 1, 'The game', f'a port on the card chosen in "New port" (step {self.card_step})')
+        row = tk.Frame(c, bg=CARD)
+        row.pack(fill='x')
+        self.mods_read_btn = ttk.Button(row, text='Read the card', style='Soft.TButton', command=self.mods_read)
+        self.mods_read_btn.pack(side='left')
+        self.mods_box = ttk.Combobox(row, textvariable=self.mods_port, state='readonly', width=58)
+        self.mods_box.pack(side='left', padx=10)
+        self.mods_box.bind('<<ComboboxSelected>>', lambda e: self.mods_list())
+        self.mods_note = self.label(c, 'Press "Read the card" to see the ports that are on it.', soft=True, justify='left')
+        self.mods_note.pack(anchor='w', pady=(8, 0))
+
+        c = self.card(page, 2, 'Mods for this game', 'tick the ones to have on (click a row): those kept on the card, in /mods, and those of this computer')
+        cols = [('on', 'On', 40), ('name', 'Mod', 250), ('where', 'Where it is', 190), ('version', 'Version', 60), ('size', 'Size', 70), ('note', 'Notes', 230)]
+        self.mods_tree = ttk.Treeview(c, columns=[k for k, _, _ in cols], show='headings', height=7, selectmode='browse')
+        for col, text, width in cols:
+            self.mods_tree.heading(col, text=text, anchor='w')
+            self.mods_tree.column(col, width=width, anchor='w')
+        self.mods_tree.pack(fill='x')
+        self.mods_tree.tag_configure('off', foreground=SOFT)
+        self.mods_tree.tag_configure('warn', foreground=WARN)
+        self.mods_tree.bind('<Button-1>', self.mods_click)
+        self.mods_about = self.label(c, '', soft=True, justify='left', wraplength=820)
+        self.mods_about.pack(anchor='w', pady=(8, 0))
+        self.mods_warn = tk.Label(c, text='', bg=CARD, fg=WARN, font=(FONT, 9), justify='left', wraplength=820)
+        self.mods_warn.pack(anchor='w', pady=(4, 0))
+        row = tk.Frame(c, bg=CARD)
+        row.pack(fill='x', pady=(10, 0))
+        self.mods_apply_btn = ttk.Button(row, text='APPLY TO THE CARD', style='Primary.TButton', command=self.mods_apply)
+        self.mods_apply_btn.pack(side='left')
+        self.mods_off_btn = ttk.Button(row, text='Take all off', style='Soft.TButton', command=lambda: self.mods_apply(none=True))
+        self.mods_off_btn.pack(side='left', padx=10)
+        # (a file is known to be on the card by its size: a mod changed with no file's size changing needs every file copied again)
+        ttk.Checkbutton(row, text='Copy every file again', variable=self.mods_again).pack(side='left', padx=(0, 10))
+        self.label(row, 'Of two that overlap, the lower one wins:', soft=True).pack(side='left', padx=(10, 0))
+        ttk.Button(row, text='▲ up', style='Text.TButton', command=lambda: self.mods_move(-1)).pack(side='left')
+        ttk.Button(row, text='▼ down', style='Text.TButton', command=lambda: self.mods_move(1)).pack(side='left')
+        self.work_buttons += [self.mods_apply_btn, self.mods_off_btn, self.mods_read_btn]
+
+        c = self.card(page, None, 'Mods on this computer', 'a folder of mods to send to the card: one folder for each mod')
+        row = tk.Frame(c, bg=CARD)
+        row.pack(fill='x')
+        ttk.Entry(row, textvariable=self.mods_dir).pack(side='left', fill='x', expand=True)
+        ttk.Button(row, text='Choose...', style='Text.TButton', command=self.mods_pick).pack(side='left', padx=(6, 0))
+        ttk.Button(row, text='Open', style='Text.TButton', command=self.mods_open).pack(side='left')
+        ttk.Button(row, text='Refresh', style='Text.TButton', command=self.mods_list).pack(side='left')
+        row = tk.Frame(c, bg=CARD)
+        row.pack(fill='x', pady=(8, 0))
+        self.mods_send_btn = ttk.Button(row, text='Send all to the card', style='Soft.TButton', command=self.mods_send)
+        self.mods_send_btn.pack(side='left')
+        self.mods_send1_btn = ttk.Button(row, text='Send the selected one', style='Soft.TButton', command=lambda: self.mods_send(one=True))
+        self.mods_send1_btn.pack(side='left', padx=(8, 0))
+        self.work_buttons.append(self.mods_send1_btn)
+        self.mods_local = self.label(row, '', soft=True)
+        self.mods_local.pack(side='left', padx=10)
+        self.work_buttons.append(self.mods_send_btn)
+        self.label(c, 'A mod of this computer can be ticked and applied as it is: its files go straight to the game\'s folder on the card.\n'
+                      'Sending puts a mod on the card without putting it on for any game: it is there for later, from this window or from the console.\n'
+                      'Mods are kept on the card, in the folder "mods" at its root: a folder copied there by hand is a mod too. Putting one on copies its files\n'
+                      'to the port\'s own mods folder, where the game reads them; taking it off removes them, and the mod stays in "mods" for the next time.\n'
+                      'A mod is a folder with mod.json (its name, and the game it is for) and its files under "files", each at the path it has in the game.\n'
+                      'Two mods that have the same file overlap: the game can get only one, and this page says which.',
+                   soft=True, justify='left').pack(anchor='w', pady=(8, 0))
+
+    # ---- the mods page: asking tools/mods.py, and showing what it says
+    def card_where(self, quiet=False):
+        """[--sd x] or [--ftp host] of the card chosen in "New port"; None (said, unless quiet) if it isn't filled in."""
+        if self.where.get() == 'sd':
+            sd = self.sd.get().split('  ')[0].strip()
+            if sd:
+                return ['--sd', sd]
+        elif self.ftp.get().strip():
+            return ['--ftp', self.ftp.get().strip()]
+        if not quiet:
+            messagebox.showwarning('No card', f'Choose the console\'s card first: "New port", step {self.card_step} (the card in this computer, or the console\'s address).')
+        return None
+
+    def mods_ask(self, args, then):
+        """A question to tools/mods.py, asked apart from the window's thread; then(lines) is called with what it printed."""
+        self.mods_asked += 1
+        mine = self.mods_asked
+        cmd = [sys.executable, '-u', f'{ROOT}/nxrelink.py', 'mods'] + args + ['--mods', self.mods_dir.get()]
+
+        def work():
+            flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            try:
+                out = subprocess.run(cmd, capture_output=True, text=True, encoding='utf-8', errors='replace', cwd=ROOT, creationflags=flags, timeout=120,
+                                     env=dict(os.environ, NX2_GUI='1', PYTHONIOENCODING='utf-8'))
+                lines = (out.stdout + out.stderr).splitlines()
+            except (OSError, subprocess.SubprocessError) as e:
+                lines = [str(e)]
+            self.lines.put(('asked', mine, then, lines))  # (answered on the window's own thread: pump)
+        threading.Thread(target=work, daemon=True).start()
+
+    def mods_read(self):
+        where = self.card_where()
+        if not where:
+            return
+        self.mods_note.configure(text='Reading the card...', fg=SOFT)
+
+        def got(lines):
+            keep = self.mods_chosen()
+            self.mods_ports = {}
+            for line in lines:
+                if line.startswith('@@port|'):
+                    _, port, title, title_id, on = line.split('|')
+                    self.mods_ports[port] = (title, title_id, int(on))
+            shown = [f'{title or "game not known"}   ·   {port}' + (f'   ·   {on} mod(s) on' if on else '') for port, (title, _, on) in self.mods_ports.items()]
+            self.mods_box['values'] = shown
+            if not self.mods_ports:
+                said = [x for x in lines if x.strip() and not x.startswith('@@')]
+                self.mods_note.configure(text=(said[-1] if said else 'No port is on this card.')[:200], fg=WARN)
+                self.mods_port.set('')
+                return
+            self.mods_port.set(shown[list(self.mods_ports).index(keep)] if keep in self.mods_ports else shown[0])
+            self.mods_note.configure(text=f'{len(self.mods_ports)} port(s) on the card. A port whose game is "not known" was built on another computer: '
+                                          'every mod is offered for it.', fg=SOFT)
+            self.mods_list()
+        self.mods_ask(['ports'] + where, got)
+
+    def mods_chosen(self):
+        shown = self.mods_port.get()
+        return shown.split('   ·   ')[1] if '   ·   ' in shown else ''
+
+    def mods_pick(self):
+        self.mods_dir.set(filedialog.askdirectory() or self.mods_dir.get())
+        self.mods_list()
+
+    def mods_list(self):
+        port, where = self.mods_chosen(), self.card_where(quiet=True)
+
+        def got(lines):
+            self.mods_rows, on, loose, said, here = {}, {}, None, [], []
+            for line in lines:
+                if line.startswith('@@mod|'):
+                    f = line.split('|', 15)[1:]
+                    self.mods_rows[f[0]] = dict(name=f[1], version=f[2], game=f[3] or f[4], fit=f[5], files=int(f[7]), size=int(f[8]),
+                                                shared=[x for x in f[9].split(',') if x], needs=[x for x in f[10].split(',') if x], bad=f[11], about=f[12],
+                                                here=f[13] if len(f) > 13 else 'no', code=len(f) > 14 and f[14] == 'code')
+                    if int(f[6]):
+                        on[int(f[6])] = f[0]
+                elif line.startswith('@@loose|'):
+                    loose = line.split('|', 2)
+                elif line.startswith('@@local|'):
+                    here.append(line.split('|', 8)[2])
+                elif line.startswith(('On the card and no longer', 'No mods in', 'No FTP server')):
+                    said.append(line)
+            self.mods_on = [on[k] for k in sorted(on)]
+            self.mods_loose = (f'{loose[1]} file(s) in the port\'s mods folder were put there by hand ({loose[2]}'
+                               f'{" ..." if int(loose[1]) > 6 else ""}): they are left alone.') if loose else ''
+            self.mods_said = ' '.join(said)
+            self.mods_local.configure(text=(f'{len(here)} not on the card yet, or different there: ' + ', '.join(here)[:70]) if here else
+                                      'The card has every mod of this folder.' if port and where else '', fg=WARN if here else SOFT)
+            self.mods_paint()
+        self.mods_ask(['list'] + ([port] + where if port and where else []), got)
+
+    def mods_name(self, mid):
+        return self.mods_rows[mid]['name'] if mid in self.mods_rows else mid
+
+    def mods_paint(self):
+        keep = self.mods_tree.selection()
+        self.mods_tree.delete(*self.mods_tree.get_children())
+        # (those that are on first, in their order: the lower of two that overlap is the one the game gets)
+        order = self.mods_on + [m for m in self.mods_rows if m not in self.mods_on]
+        notes = []
+        for mid in order:
+            m = self.mods_rows.get(mid)
+            if not m or m['fit'] == 'no':
+                continue
+            on = mid in self.mods_on
+            note = []
+            if m.get('code'):
+                note.append('runs code in the game')
+            if m['bad']:
+                note.append('can\'t be used: ' + m['bad'])
+            clash = [o for o in m['shared'] if on and o in self.mods_on]
+            if clash:
+                wins = max(clash + [mid], key=self.mods_on.index)
+                note.append('overlaps with ' + ', '.join(self.mods_name(o) for o in clash) + (': this one wins' if wins == mid else ': the other wins'))
+                if wins == mid:
+                    notes.append(f'"{m["name"]}" and ' + ', '.join(f'"{self.mods_name(o)}"' for o in clash) + ' have files in common: '
+                                 f'the game gets those of "{m["name"]}", the lower one.')
+            elif m['shared']:
+                note.append('would overlap with ' + ', '.join(self.mods_name(o) for o in m['shared']))
+            lacks = [n for n in m['needs'] if on and n not in self.mods_on]
+            if lacks:
+                note.append('needs ' + ', '.join(self.mods_name(n) for n in lacks))
+                notes.append(f'"{m["name"]}" needs ' + ', '.join(f'"{self.mods_name(n)}"' for n in lacks) + ', which isn\'t ticked.')
+            size = amount(m['size']) if m['size'] >= 1 << 20 else f'{m["size"] // 1024} KB'
+            where = {'only': 'this computer only', 'same': 'SD card, and this computer', 'different': 'SD card (this computer\'s differs)',
+                     'no': 'SD card'}[m['here']]
+            self.mods_tree.insert('', 'end', iid=mid, values=('☑' if on else '☐', m['name'], where, m['version'], size, '; '.join(note)),
+                                  tags=(('warn',) if lacks or m['bad'] else () if on else ('off',)))
+        if keep and self.mods_tree.exists(keep[0]):
+            self.mods_tree.selection_set(keep[0])
+        hidden = sum(1 for m in self.mods_rows.values() if m['fit'] == 'no')
+        if not self.mods_tree.get_children():
+            notes.append((f'No mod for this game in /mods on the card' + (f' ({hidden} for other games)' if hidden else '') + '.') if self.mods_chosen() else
+                         'Read the card and choose a port to see the mods for its game.')
+        self.mods_warn.configure(text='\n'.join(notes + [x for x in (self.mods_loose, self.mods_said) if x]))
+        self.mods_paint_about()
+
+    def mods_paint_about(self):
+        sel = self.mods_tree.selection()
+        m = self.mods_rows.get(sel[0]) if sel else None
+        self.mods_about.configure(text=f'{m["name"]}: {m["about"] or "no description"}   ({m["files"]} files)' if m else '')
+
+    def mods_click(self, event):
+        mid = self.mods_tree.identify_row(event.y)
+        if not mid or self.proc or self.mods_rows[mid]['bad']:
+            return None
+        if mid in self.mods_on:
+            self.mods_on.remove(mid)
+        else:
+            self.mods_on.append(mid)
+        self.mods_paint()
+        self.mods_tree.selection_set(mid)
+        self.mods_paint_about()
+        return 'break'
+
+    def mods_move(self, by):
+        sel = self.mods_tree.selection()
+        if not sel or sel[0] not in self.mods_on:
+            return
+        i = self.mods_on.index(sel[0])
+        self.mods_on.insert(min(max(i + by, 0), len(self.mods_on) - 1), self.mods_on.pop(i))
+        self.mods_paint()
+
+    def mods_open(self):
+        d = self.mods_dir.get()
+        os.makedirs(d, exist_ok=True)
+        if os.name == 'nt':
+            os.startfile(d)  # noqa: S606
+        else:
+            subprocess.Popen(['open' if sys.platform == 'darwin' else 'xdg-open', d])
+
+    def mods_send(self, one=False):
+        """This computer's mods copied to the card's /mods, where they are kept: none is put on by this."""
+        where = self.card_where()
+        if not where:
+            return
+        sel = self.mods_tree.selection()
+        if one and (not sel or self.mods_rows[sel[0]]['here'] not in ('only', 'different')):
+            messagebox.showinfo('Send', 'Select in the list a mod that is on this computer and not on the card (or different there).')
+            return
+        self.start('mods', ['mods', 'send'] + ([sel[0]] if one else []) + where + ['--mods', self.mods_dir.get()] +
+                   (['--again'] if self.mods_again.get() else []))
+
+    def mods_apply(self, none=False):
+        port, where = self.mods_chosen(), self.card_where()
+        if not where:
+            return
+        if not port:
+            messagebox.showwarning('No port', 'Press "Read the card" and choose the port first.')
+            return
+        want = [] if none else [m for m in self.mods_on if m in self.mods_rows]
+        if none and not messagebox.askyesno('Take all off', f'Take every mod off "{port}"? The game\'s own files are used again. '
+                                                            'Files put in its mods folder by hand stay.'):
+            return
+        self.start('mods', ['mods', 'set', port] + want + where + ['--mods', self.mods_dir.get()] + (['--again'] if self.mods_again.get() else []))
+
     def page_settings(self, page):
         if SWITCH:
             c = self.card(page, None, 'Your console\'s keys', 'prod.keys, to open your games; never shown or sent anywhere')
@@ -417,6 +687,17 @@ class App:
             self.label(c, 'A whole module is mapped as on its console; the others are relinked into the port. The console\'s loader maps eight images\n'
                           'for a program: "all" leaves a game that loads modules of its own as it runs no room for them. "auto" decides this by the game.',
                        soft=True, justify='left').pack(anchor='w', pady=(8, 0))
+        if SWITCH2:
+            c = self.card(page, None, 'Sources of your own built into the port', 'Switch 2 games' if DEV else None)
+            row = tk.Frame(c, bg=CARD)
+            row.pack(fill='x')
+            ttk.Button(row, text='Add...', style='Soft.TButton', command=self.pick_also).pack(side='left')
+            ttk.Button(row, text='Clear', style='Text.TButton', command=self.clear_also).pack(side='left', padx=6)
+            self.label(row, '', textvariable=self.also_text).pack(side='left', padx=8)
+            self.label(c, 'C files with code that runs in the game ("hooks"): each names a function that is called once before the game starts and may\n'
+                          'change which function a table of the game\'s points to. runtime/nx2_hook.h says what such a file may use. A file is written for\n'
+                          'one version of one game. They are kept with the port, and "Build again" builds them in again.',
+                       soft=True, justify='left').pack(anchor='w', pady=(8, 0))
         c = self.card(page, None, 'Detailed log')
         ttk.Checkbutton(c, text='When installing, turn on the port\'s detailed log (the file "debug" in its folder on the card)', variable=self.long_log).pack(anchor='w')
         self.label(c, 'The port then writes every call the game makes to log.txt: much slower, and a large file. Delete "debug" from the port\'s folder to turn it off.',
@@ -461,6 +742,15 @@ class App:
         self.memory.set('')
         self.whole.set('auto')
         self.long_log.set(False)
+        self.clear_also()
+
+    def pick_also(self):
+        self.also += [p for p in filedialog.askopenfilenames(filetypes=[('C source', '*.c'), ALL]) if p not in self.also]
+        self.also_text.set(', '.join(os.path.basename(p) for p in self.also) or 'none')
+
+    def clear_also(self):
+        self.also = []
+        self.also_text.set('none')
 
     def advanced_args(self, switch2_game):
         """The advanced options that aren't at their defaults, as arguments; None (said) if one is wrong."""
@@ -475,6 +765,8 @@ class App:
                 args += ['--memory', memory]
             if whole != 'auto':
                 args += ['--whole', whole]
+            for path in self.also:
+                args += ['--also', path]
             if args and not messagebox.askyesno('Advanced options', 'This port will be built with advanced options changed:\n\n   ' + ' '.join(args) +
                                                 '\n\nThe game may not start, or may stop while it loads. Build it this way?', icon='warning'):
                 return None
@@ -806,7 +1098,8 @@ class App:
                     'install': 'Done: it is on the card, and what arrived was checked against what was sent.',
                     'make': 'Done: the port is built. It can be installed from "My ports".', 'make2': 'Done: the port is built. It can be installed from "My ports".',
                     'check': 'Checked: the result is in the details.', 'setup': 'Checked: the result is in the details.',
-                    'remake': 'Done: every port is built again, and its program is on the card.'}
+                    'remake': 'Done: every port is built again, and its program is on the card.',
+                    'mods': 'Done: the card is as asked. A port uses the mods that are on from its next start.'}
             self.headline.configure(text=done[self.kind], fg=GOOD)
             self.bar.configure(style='Good.Horizontal.TProgressbar', mode='determinate', value=1000)
             self.percent.configure(text='')
@@ -831,12 +1124,17 @@ class App:
         self.refresh_ports()
         if self.kind == 'setup':
             self.check_deps()
+        if self.kind == 'mods':
+            self.mods_read()
 
     def pump(self):
         try:
             for _ in range(400):
                 item = self.lines.get_nowait()
-                if isinstance(item, tuple):
+                if isinstance(item, tuple) and item[0] == 'asked':
+                    if item[1] == self.mods_asked:  # (not an answer to a question asked before the last one)
+                        item[2](item[3])
+                elif isinstance(item, tuple):
                     self.finish(item[1])
                 elif item.startswith('@@phase|'):
                     _, i, n, _ = item.rstrip('\n').split('|', 3)

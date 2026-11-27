@@ -218,9 +218,11 @@ A port is two things on the SD card: its program, **`/switch/nx2-relink/<name>.n
 |---|---|
 | `romfs.bin` (or `romfs.bin.00`, `.01`, ...) | The game's files |
 | **`save/`** | **The game's saved data** |
+| `cache/` | The game's cache storage, if it keeps one: a folder for each of its numbers |
 | **`crash.txt`** | **Written when a run ended badly: the file to send with a report** |
 | `log.txt`, `log.prev.txt` | The log of the last run, and of the one before |
 | `debug` | If this file exists (empty will do), the log is the detailed one |
+| `nvnnative` | If this file exists, the game's graphics driver is left unwatched: something to try for a game that doesn't start. The log then has no line of how fast the game runs |
 | **`mods/`** | **Optional: files of yours that the game gets in place of its own (below)** |
 
 **Saved data.** A port keeps its saves in `/nx2-relink/<name>/save/`, as loose files, exactly as the game writes them.
@@ -258,8 +260,8 @@ file of that path, from the next time it is started. Nothing is built again and 
 
 - **It is optional.** With no `mods/` folder, or nothing in it that the game has, a port runs exactly as it did before.
 - **To take a mod out**, delete its file from `mods/`. The game's own file was never changed.
-- **Only files the game already has** are replaced. One the game hasn't is left out, and the log says so. Adding new files
-  isn't done yet.
+- **A file the game hasn't** is added when the game has the folder it is in. One in a folder the game hasn't is left out,
+  and the log says so.
 - **The file must be in the form the game expects**, its packing included: the port passes it on as it is. Some games also
   keep a table of every file's size, and a replacement larger than the original may need that table replaced too. That is the
   game's own matter, and its modding community's.
@@ -267,6 +269,64 @@ file of that path, from the next time it is started. Nothing is built again and 
   the first time the game reads each one.
 
 The game's paths are those of its dump: `python tools/game2.py info <dump>` and the dump's own `romfs/` folder show them.
+
+### The mods manager
+
+Files don't have to be copied by hand. A mod can be a folder of its own, kept on the card in **`/mods`** at its root, and put
+on a port or taken off it with the tool: the Mods page of the window, or `python nxrelink.py mods ...`.
+
+```
+/mods/<mod>/mod.json     {"name": "...", "game": {"title_id": "...", "title": "..."}, "version": "1.0",
+                          "author": "...", "description": "...", "requires": ["<another mod's folder>"]}
+/mods/<mod>/files/...    its files, each at the path it has in the game
+```
+
+| Command | What it does |
+|---|---|
+| `mods ports` | The ports on the card, and how many mods each has on |
+| `mods list [<port>]` | The mods on the card; with a port: which are for its game, which are on, which overlap |
+| `mods send [<mod> ...]` | Mods of the folder `mods` beside the tool copied to the card's `/mods` |
+| `mods apply <port> <mod> ...` | These put on, added to the ones that are on |
+| `mods remove <port> <mod> ...` (or `--all`) | These taken off |
+| `mods set <port> [<mod> ...]` | Exactly these on, in this order |
+| `mods delete <mod> ...` | Mods removed from the card's `/mods` (taken off first) |
+
+Each takes `--sd <drive>` or `--ftp <host>`. `python nxrelink.py mods help` says the rest.
+
+- **Putting a mod on copies its files** to the port's `mods/` folder; which mods are on, and which files each put there, is
+  kept in the port's `mods.json`, so taking one off removes its own files and no others.
+- **Several can be on at once.** Two with a file at the same path overlap: the game gets the file of the one put on last, and
+  the other's comes back when that one is taken off.
+- **A file is known to be on the card by its size.** A mod changed without any file's size changing is sent or put on with
+  `--again` ("Copy every file again" in the window), which copies every file of the mods named.
+- **On the console itself:** `modmanager/` is the source of **nx2-mods**, a program for the homebrew menu that puts the mods of
+  `/mods` on a port and takes them off, with the same files and records as the tool. Its own README says how it is built and
+  what it does. It decides by size alone: it has no "again".
+
+### Code in a port (hooks)
+
+A port can also be built with C sources of your own that run in the game: `make ... --also <file.c>` (more than once for
+several; the window has them on its Advanced page). Each names a function with `NX2_HOOKS(fn)`, which the port calls once
+before the game starts, and which may change which function a table of the game's points to; nothing of the game's
+instructions is changed. [`runtime/nx2_hook.h`](runtime/nx2_hook.h) is what such a source may use: a checked swap of a table's
+slot, the address of a place in a module, the log, and `nx2_hook_on("name")`, which says whether the file
+`mods/Code/<name>` is in the port's folder, so that a mod can carry the switch for a change. The sources are kept with the
+port and built in again when it is; `--also none` leaves them out. A source is written for one version of one game.
+
+**Hook files: code from the card, with nothing built again.** The same kind of source can be built as a file of its own,
+which a port loads as it starts:
+
+```
+python nxrelink.py hooks build my_change.c -o my_change.nxh --port <name>
+```
+
+Put `my_change.nxh` in the port's folder under `mods/Code/` (a mod carries it as `files/Code/my_change.nxh`, and the mods
+manager puts it there and takes it away like any other file of the mod). The port maps it through the console's own loader
+service, as it maps the game's modules, and calls its function before the game starts. The file says which game and which
+version of it it was made for (`--port` takes both from a port built on this computer): any other port refuses it, and its
+log says why, as it says for every file it uses. A hook file has no C library of its own (`memcpy`, `memset`, `strlen`,
+`strcmp` and `math.h` are there, and `nx2_hook.h`'s functions); a port takes four at most. The mods managers mark a mod with
+such a file as one that **runs code in the game**.
 
 ## Advanced options
 

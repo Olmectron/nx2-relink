@@ -589,6 +589,7 @@ int nx2_load(void) {
     module_list.next = module_list.prev = (ModuleObject *)&module_list;
     build_table();
     for (unsigned k = 0; k < nx2_module_count; k++) relocate(k);
+    nx2_hooks_install();  // (hook.c: what the port's user had built into it)
     // what rtld sets in the SDK when the SDK has it
     static const char *k_lists[] = {"_ZN2nn2ro6detail15g_pAutoLoadListE", "_ZN2nn2ro6detail17g_pManualLoadListE"};
     static struct {

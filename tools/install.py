@@ -152,7 +152,7 @@ class Ftp:
         try:
             self.ftp.connect(host, int(port or 5000), timeout=60)
             self.ftp.login()
-        except (OSError, ftplib.all_errors) as e:
+        except (OSError, *ftplib.all_errors) as e:
             sys.exit(f'No FTP server answers at {where} ({e}). Is it open on the console?')
 
     def mkdir(self, d):
@@ -299,6 +299,10 @@ def main():
                 break
         else:
             print(f'  no font found to put at {home}/font.ttf (devkitPro\'s examples have one): a game that asks for the system\'s font will end')
+    # which game the port is of, for what sorts mods by game (tools/mods.py, and a mod manager on the console): its name and title id
+    if info.get('title') or info.get('title_id'):
+        json.dump({'title': info.get('title') or '', 'title_id': str(info.get('title_id') or '').lower()}, open(f'{src_dir}/port.json', 'w', encoding='utf-8'), indent=1)
+        jobs.append((f'{src_dir}/port.json', f'{home}/port.json', False))
     if long_log:
         open(f'{src_dir}/debug', 'w').write('the port writes its detailed log while this file is in its folder\n')
         jobs.append((f'{src_dir}/debug', f'{home}/debug', False))
@@ -339,6 +343,15 @@ def main():
         if ttx:
             print('  (through Toronja Transfer: it must be open on the console)')
         wrong += not container.send_image(image, to, parts=in_parts)
+    if not no_romfs and info.get('switch2'):
+        # the game's added content, each an image of its own beside the game's (aoc<number>.romfs: runtime/rom.c gives it to the game)
+        import game2
+        import nup as container
+        for index, added in game2.added_images(info):
+            base = f'aoc{index}.romfs'
+            in_parts = split and added.size > LIMIT
+            to = f'ttx://{ttx}{home}/{base}' if ttx else f'ftp://{ftp}{home}/{base}' if ftp else card.root + home.lstrip('/') + '/' + base
+            wrong += not container.send_image(added, to, parts=in_parts)
     if wrong:
         sys.exit(f'{wrong} file(s) didn\'t arrive right: don\'t run the port until they do.')
     print('done')

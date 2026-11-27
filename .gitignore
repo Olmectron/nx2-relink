@@ -3,3 +3,4 @@ out/
 games/
 *.keys
 __pycache__/
+/mods/

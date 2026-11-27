@@ -9,6 +9,12 @@
       --target switch | switch2 | both               switch: devkitPro's libnx (default); switch2: ounce-devkit's libounce
       --out <folder>                                  where the .nro goes (default: out/)
       --heap <MB>                                     a Switch 2's port: the game's heap (default: 3200, or 7800 for a Switch 2 game)
+      --also <file.c>                                 a source file of your own built into the port (it can be given more than
+                                                      once; none needs to know of another). Each names a function with
+                                                      NX2_HOOKS(fn), which is called once, the game's modules in memory and
+                                                      nothing of the game run yet: runtime/nx2_hook.h says what it may use.
+                                                      They are kept with the port and built in again when it is built again;
+                                                      --also none  forgets them
       --whole  |  --whole=main,sdk  |  --whole=auto   a Switch 2's port: the modules (all, those named, or those that need it: a Switch 2
                                                       game's default) kept whole and mapped at run time by kaiHEN's
                                                       loader service, code and data together as on the console (not needed so far)
@@ -18,6 +24,7 @@
 import glob
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -56,6 +63,24 @@ def build_guest(work):
     return out
 
 
+def services_asked(npdm):
+    """The system services a program's own description (main.npdm) lets it open."""
+    try:
+        d = open(npdm, 'rb').read()
+        base = int.from_bytes(d[0x70:0x74], 'little')  # (the ACI0 part)
+        if d[:4] != b'META' or d[base:base + 4] != b'ACI0':
+            return []
+        at = base + int.from_bytes(d[base + 0x28:base + 0x2C], 'little')
+        end, names = at + int.from_bytes(d[base + 0x2C:base + 0x30], 'little'), []
+        while at < end and at < len(d):
+            n = (d[at] & 7) + 1
+            names.append(d[at + 1:at + 1 + n].decode('latin1'))
+            at += 1 + n
+        return names
+    except (OSError, ValueError):
+        return []
+
+
 def modules_in(exefs):
     """The game's modules in load order. rtld is left out: runtime/loader.c does its work."""
     names = ['main'] + [f'subsdk{k}' for k in range(10)] + ['sdk']
@@ -78,6 +103,7 @@ def target_flags(target):
 
 from edition import VERSION  # noqa: E402  (the tool's own: in a port's crash report)
 EXTRA = []  # more for the compiler, from the options
+ALSO = []  # (--also: sources of the user's own, built into the port)
 WHOLE = []  # (--whole: the modules kept whole and mapped at run time, code and data together as on the console)
 
 
@@ -100,6 +126,22 @@ def build(exefs, name, target, work, out_dir, shown=None):
                 extra += ['-DNX2_GAME_MB=8192', '-DNX2_GAME_ROOM_MB=400']
             else:
                 extra.append(f'-DNX2_GAME_MB={int(info.get("heap") or 7800)}')
+        # (which game this is, and its version as it shows it: the runtime tells the game's own save data from another
+        # title's by the first, and answers the game's question of its version with the second, where the title the port is
+        # started over would have had its own told)
+        try:
+            if int(info.get('title_id') or '0', 16):
+                extra.append(f'-DNX2_GAME_TITLE=0x{int(info["title_id"], 16):016x}ull')
+        except ValueError:
+            pass
+        # (only a version that is the game's own, read from its control data: a dump without that has a label of this tool's
+        # there, "update 2", which is nothing to tell a game)
+        version = str(info.get('version') or '')
+        # (and the version as this tool names it, whatever its form: what a hook file made for the game is checked against)
+        if version and len(version) < 32 and all(c.isalnum() or c in '.-_ +' for c in version):
+            extra.append(f'-DNX2_GAME_BUILD="{version}"')
+        if len(version) < 16 and re.fullmatch(r'\d+(\.\d+)+', version):
+            extra.append(f'-DNX2_GAME_DISPLAY="{version}"')
         if info.get('apart') and not any(x.startswith('-DNX2_GAME_APART_MB=') for x in extra):
             extra.append(f'-DNX2_GAME_APART_MB={int(info["apart"])}')  # (address space the game keeps apart from its heap: tools/heapdef.py)
         # (the memory for graphics the game's own description asks for, main.npdm: the runtime says so when the title a port is
@@ -116,6 +158,15 @@ def build(exefs, name, target, work, out_dir, shown=None):
             if 0 < remote <= 4096:
                 print(f'{name}: made for {remote} MB of memory for graphics and {system >> 10} MB of system resource. A port has those from '
                       'the game the homebrew menu is started over: the game itself is the surest choice (the log says what it had)')
+            # (A game of the older kind: its program draws through the service "nvdrv", as a Switch game's does, and its own
+            # description asks for that one. Some games sold for this console are such: one program for both consoles, made with
+            # the older SDK, that asks whether it runs on the newer one. A program started over a game of the newer kind is
+            # refused "nvdrv", and nothing in a port can give it: said here, and by the port at its start.)
+            if 'nvdrv' in services_asked(described):
+                extra.append('-DNX2_GAME_NVDRV=1')
+                print(f'{name}: THIS GAME IS OF THE OLDER KIND: its program draws through the system service "nvdrv", as a Switch game does. '
+                      'Its port runs only when the homebrew menu is started over a game of that same kind, and the surest is this same '
+                      'game. Started over another, it ends as it starts its graphics.')
         changed = False
         for x in extra:  # (given on the command line: kept with the port, for the next time it is built)
             if x.startswith('-DNX2_GAME_MB=') and info.get('heap') != int(x[14:]):
@@ -124,6 +175,19 @@ def build(exefs, name, target, work, out_dir, shown=None):
             info['whole'], changed = WHOLE[0], True
         if changed:
             json.dump(info, open(beside, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    # (the sources of the user's own, --also: kept with the port as its memory and its whole modules are, so that building it
+    # again builds them in again. `--also none` forgets them.)
+    also = [a for a in ALSO if a != 'none']
+    if os.path.isfile(beside):
+        if ALSO and info.get('also', []) != also:
+            info['also'] = also
+            json.dump(info, open(beside, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+        elif not ALSO:
+            also = list(info.get('also') or [])
+    for a in also:
+        if not os.path.isfile(a):
+            sys.exit(f'{name}: {a} isn\'t there. It is a source of your own this port is built with (--also). Put it back, or '
+                     'build the port once with  --also none  to leave such sources out.')
     gen = f'{work}/gen'
     os.makedirs(gen, exist_ok=True)
     for f in glob.glob(f'{gen}/*'):
@@ -137,12 +201,13 @@ def build(exefs, name, target, work, out_dir, shown=None):
     obj = f'{work}/obj_{target}'
     os.makedirs(obj, exist_ok=True)
     objs = []
-    sources = sorted(glob.glob(f'{ROOT}/runtime/*.c') + glob.glob(f'{ROOT}/runtime/*.s')) + [f'{gen}/modules.c'] + [f'{gen}/{n}.s' for n, _ in mods]
+    sources = sorted(glob.glob(f'{ROOT}/runtime/*.c') + glob.glob(f'{ROOT}/runtime/*.s')) + [f'{gen}/modules.c'] + [f'{gen}/{n}.s' for n, _ in mods] + also
     progress('relink', target, 1, 1)
     for k, s in enumerate(sources):
         progress('compile', target, k, len(sources))
         s = s.replace('\\', '/')
-        o = f'{obj}/{os.path.basename(s)}.o'
+        # (a source of the user's own has its place in the name: two of them may be called the same)
+        o = f'{obj}/{f"also{also.index(s)}_" if s in also else ""}{os.path.basename(s)}.o'
         # (the modules' .s files name their .bin files by name alone: assembled from the folder they are in)
         run([GCC, '-c', '-O2', '-g', '-Wall', '-ffunction-sections', *ARCH, *cflags, *extra, f'-DNX2_NAME="{name}"', f'-DNX2_VERSION="{VERSION}"', f'-I{ROOT}/runtime', s, '-o', o], cwd=gen)
         objs.append(o)
@@ -168,7 +233,7 @@ def build(exefs, name, target, work, out_dir, shown=None):
     run([f'{DKP}/tools/bin/elf2nro', elf, nro, f'--nacp={nacp}'] + ([f'--icon={icon}'] if icon and os.path.isfile(icon) else []))
     progress('link', target, 1, 1)
     print(f'{nro}: {os.path.getsize(nro) >> 10} KB ({target}); "{title}" {shown.get("version") or ""}{", with its icon" if icon else ""}; '
-          f'symbols in {elf}')
+          f'symbols in {elf}' + (f'; with {len(also)} source(s) of your own built in: {", ".join(os.path.basename(a) for a in also)}' if also else ''))
     return nro
 
 
@@ -195,6 +260,9 @@ def main():
     updates = []
     while '--update' in args:
         updates.append(opt('--update', None))
+    while '--also' in args:
+        one = opt('--also', None)
+        ALSO.append('none' if one == 'none' else os.path.abspath(one).replace('\\', '/'))
     heap = opt('--heap', None)  # (MB for the game's heap on a Switch 2, where 3200 is given: a Switch 2 game's own needs more)
     if heap:
         EXTRA.append(f'-DNX2_GAME_MB={int(heap)}')

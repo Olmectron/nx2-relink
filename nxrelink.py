@@ -43,6 +43,12 @@ HELP_SWITCH = f"""{TOOL} {VERSION}: a Switch game you own, made into a homebrew 
                                      a port already built, put on a card (--nro-only: its program alone, when the game's
                                      files are on the card already)
   {ME} list                 the ports already built
+  {ME} mods ports | list [<port>] | send [<mod> ...] | apply <port> <mod> ... | remove <port> <mod> ... | set <port> [<mod> ...]
+      --sd <drive> | --ftp <host>    mods of a game, kept on the card in the folder mods at its root (one folder each: mod.json
+                                     and its files under files/; "send" copies there the ones in the folder mods beside this
+                                     tool), put on a port or taken off it. Several can be on at once; two that have the same
+                                     file overlap, which is said, and the one put on last wins.
+                                     `{ME} mods help` says how a mod's folder is made
 
   ADVANCED option of make and install:
       --long-log                     with --sd or --ftp: the port writes its detailed log from its first run (the file "debug"
@@ -86,6 +92,18 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
                                      from what was kept of each when it was made, with its own settings; with a card, each
                                      one's program is copied to it (the game's files there stay). For after an update
   {ME} list                 the ports already built
+  {ME} mods ports | list [<port>] | send [<mod> ...] | apply <port> <mod> ... | remove <port> <mod> ... | set <port> [<mod> ...]
+      --sd <drive> | --ftp <host>    mods of a game, kept on the card in the folder mods at its root (one folder each: mod.json
+                                     and its files under files/; "send" copies there the ones in the folder mods beside this
+                                     tool), put on a port or taken off it. Several can be on at once; two that have the same
+                                     file overlap, which is said, and the one put on last wins.
+                                     `{ME} mods help` says how a mod's folder is made
+  {ME} hooks build <file.c> [<file.c> ...] -o <name>.nxh --port <name>
+                                     a HOOK FILE: code of your own (the same kind of source as --also's) that a port loads
+                                     from the card as it starts, with nothing built again. It goes in the port's folder under
+                                     mods/Code/ (a mod carries it as files/Code/<name>.nxh). It is made for one version of
+                                     one game, the port's named here, and any other port refuses it and says so in its log.
+                                     `{ME} hooks info <name>.nxh` says which game it is for
 
   ADVANCED options of make. They change what the game is given, and a wrong value makes a game that worked stop at its start
   or while it loads. Leave them alone unless a game needs one; nothing here can harm the console.
@@ -101,6 +119,13 @@ HELP_SWITCH2 = f"""{TOOL} {VERSION}: a game you own, from its NUP container or a
                                      program: "all" leaves a game that loads its own no room for them
       --long-log                     with --sd or --ftp: the port writes its detailed log from its first run (the file "debug"
                                      in its folder; slower, and larger)
+      --also <file.c>                a C source file of your own built into the port: code that runs in the game ("hooks"). It
+                                     can be given more than once, and none needs to know of another: each names a function
+                                     with NX2_HOOKS(fn), called once before the game starts, which may change which function
+                                     a table of the game's points to. runtime/nx2_hook.h says what such a source may use.
+                                     The sources are kept with the port and built in again by remake;  --also none  leaves
+                                     them out. A source is written for one version of a game, and says so itself in the log
+                                     when the game isn't that one
 
 On the card a port is its program, /switch/nx2-relink/<name>.nro, and its folder at the card's root, /nx2-relink/<name>/: the
 game's files, its saved data (save/), its log (log.txt) and, after a run that ended badly, crash.txt: the file to send with a
@@ -294,6 +319,7 @@ def cmd_make(args):
     sd, ftp, fmt = take(args, '--sd'), take(args, '--ftp'), take(args, '--sd-format', 'auto')
     install_target = take(args, '--install-target')
     ttx, memory, whole = take(args, '--ttx'), take(args, '--memory'), take(args, '--whole')
+    also = take(args, '--also', many=True) or []
     nro_only = flag(args, '--nro-only')
     no_romfs, long_log = flag(args, '--no-romfs') or nro_only, flag(args, '--long-log')
     if len(args) != 1 or (sd and ftp):
@@ -302,7 +328,7 @@ def cmd_make(args):
     if game.lower().endswith('.nup') or os.path.isdir(game):
         if not SWITCH2:
             sys.exit(f'{game} is a NUP container or a folder. {TOOL} takes a Switch game\'s NSP: that kind of dump is nx2-relink\'s.')
-        return make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory, whole, long_log)
+        return make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory, whole, long_log, also)
     if not SWITCH:
         sys.exit(f'{game}: {TOOL} takes a NUP container, or a folder of a game\'s loose files. A Switch game (NSP) is nx-relink\'s.')
     for path in [game, update, *aocs]:
@@ -338,9 +364,16 @@ def cmd_make(args):
         phase(steps, steps, f'{name}: done. To put it on a console\'s card:  {ME} install {name} --sd <drive>   (or --ftp <host>)')
 
 
-def advanced(memory, whole):
+def advanced(memory, whole, also=()):
     """The advanced options of a Switch 2 port, checked and said: what tools/build.py is given for them."""
     out = []
+    for path in also:
+        if path != 'none' and not (os.path.isfile(path) and path.lower().endswith(('.c', '.s'))):
+            sys.exit(f'--also {path}: a C source file of your own (.c), or "none" to leave out the ones the port was built with before.')
+        out += ['--also', path]
+    if [p for p in also if p != 'none']:
+        print(f'ADVANCED: {len(also)} source(s) of your own are built into the port ({", ".join(os.path.basename(p) for p in also)}): code that runs '
+              'in the game. They are kept with the port and built in again when it is built again;  --also none  leaves them out.')
     if memory is not None:
         if not memory.isdigit() or not MEMORY[0] <= int(memory) <= MEMORY[1]:
             sys.exit(f'--memory is a number of MB from {MEMORY[0]} to {MEMORY[1]}.')
@@ -355,14 +388,14 @@ def advanced(memory, whole):
     return out
 
 
-def make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory=None, whole=None, long_log=False):
+def make_switch2(game, update, name, shown, sd, ftp, ttx, fmt, no_romfs, memory=None, whole=None, long_log=False, also=()):
     """A Switch 2 game, from its NUP container or a folder of its loose files: its own SDK does the drawing, so nothing of a Switch
     game's port is needed but the relinking (no keys: a dump of these isn't encrypted; no shaders translated; no check of what it
     asks, which is of a Switch's). Its updates are laid over it by tools/game2.py."""
     for path in (game, update):
         if path and not os.path.exists(path):
             sys.exit(f'{path} isn\'t there.')
-    extra = advanced(memory, whole)
+    extra = advanced(memory, whole, also)
     need([FOR_2, 'devkitA64 (the compiler)', 'elf2nro and nacptool (switch-tools)', 'zstandard', 'lz4'])
     name = slug(name or title_of(game))
     steps = 3 if (sd or ftp) else 2
@@ -478,6 +511,19 @@ def main():
         cmd_identity(args)
     elif cmd == 'remake' and SWITCH2:
         cmd_remake(args)
+    elif cmd == 'hooks' and SWITCH2:
+        import hooks
+        hooks.main(args)
+    elif cmd == 'mods':
+        import mods
+        doing = args and args[0] in ('apply', 'remove', 'set', 'send')
+        if os.environ.get('NX2_GUI'):
+            os.environ['NX2_PROGRESS'] = '1'
+        if doing:
+            phase(1, 2, 'Copy and verify')
+        mods.main(args)
+        if doing:
+            phase(2, 2, 'Done')
     elif cmd == 'list':
         for name, (title, version, targets) in built().items():
             print(f'{name}: {title} {version}' + (f' ({", ".join(targets)})' if EDITION == 'dev' else ''))

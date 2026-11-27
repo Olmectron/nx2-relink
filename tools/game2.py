@@ -80,6 +80,45 @@ def folder_layer(folder, what, version):
     return Layer(what, version, modules, files, folder.replace(os.sep, '/'))
 
 
+def added_index(p):
+    """The number of a container's package of added content, the one a game asks for it by (the last digits of its title's
+    number), or 0: not added content, or without files, or with a number a port has no file name for."""
+    index = p['title'] & 0xFFF
+    return index if p['kind'] == 2 and p['romfs'] != 0xFFFFFFFF and 0 < index < 100 else 0
+
+
+def added_of(path):
+    """A dump's added content that a port takes: [(its number, the package's number, how many files, their size)]. A container's
+    alone: a folder dump's isn't read yet.
+    Each goes on the card beside the game's files as aoc<number>.romfs, which the port gives the game when its SDK asks for that
+    content (runtime/rom.c). For a game that is one program for two consoles, the content that makes it the newer console's
+    edition is such a package, of a single small file: without it the game runs as the older console's."""
+    if not os.path.isfile(path):
+        return []
+    box, out = container.Nup(path), []
+    for k, p in enumerate(box.packages):
+        index = added_index(p)
+        if index:
+            files = container.package_files(box, k)
+            out.append((index, k, len(files), sum(s for s, _ in files.values())))
+    return out
+
+
+def added_images(info):
+    """The added content of the game a port's info.json tells of, each as a RomFS image: [(its number, the image)]."""
+    out, seen = [], set()
+    for path in [info.get('dump') or info.get('nup')] + list(info.get('updates') or []):
+        if not path or not os.path.isfile(path):
+            continue
+        box = container.Nup(path)
+        for k, p in enumerate(box.packages):
+            index = added_index(p)
+            if index and index not in seen:
+                seen.add(index)
+                out.append((index, container.RomFS(container.package_files(box, k))))
+    return sorted(out, key=lambda x: x[0])
+
+
 def layers_of(path, as_update=False):
     """A dump's layers, and what else it has that isn't taken (added content): ([Layer], [a line about each thing left])."""
     left = []
@@ -88,7 +127,8 @@ def layers_of(path, as_update=False):
         out = []
         for k, p in enumerate(box.packages):
             if p['kind'] not in (0, 1):
-                left.append(f'package {k} ({container.KINDS.get(p["kind"], p["kind"])}): not taken yet')
+                if not added_index(p):  # (added content with files and a number goes on the card: added_of, below)
+                    left.append(f'package {k} ({container.KINDS.get(p["kind"], p["kind"])}): not taken yet')
                 continue
             modules, files = {}, {}
             if p['exefs'] != 0xFFFFFFFF:
@@ -152,10 +192,12 @@ class Dump:
     def __init__(self, path, updates=()):
         self.path, self.updates = path, list(updates)
         self.layers, self.left = layers_of(path)
+        self.added = added_of(path)
         for u in self.updates:
             more, left = layers_of(u, as_update=True)
             self.layers += more
             self.left += left
+            self.added += [a for a in added_of(u) if a[0] not in {b[0] for b in self.added}]
         # the game first, then the updates by their versions (as they were given, where those are the same)
         self.layers.sort(key=lambda layer: (layer.what != 'the game', layer.version))
         with_code = [layer for layer in self.layers if 'main' in layer.modules]
@@ -192,6 +234,8 @@ class Dump:
         lines = [layer.said() for layer in self.layers]
         lines.append(f'a port takes: the program of {self.code.what}{f" {version_text(self.code.version)}" if self.code.version else ""}'
                      f' ({", ".join(sorted(self.code.modules))}); the files of all of them, the later over the earlier')
+        lines += [f'added content {index}: {count} file(s), {size >> 10} KB (package {k}); it goes on the card beside the game\'s files, as aoc{index}.romfs'
+                  for index, k, count, size in self.added]
         return lines + [f'left: {x}' for x in self.left]
 
 

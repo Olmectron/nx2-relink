@@ -56,6 +56,10 @@ static inline u8 *nx2_host(const Nx2Module *m, u64 a) { return a < m->data_off ?
 
 // loader.c: the modules' relocations and symbols (what rtld does on the console), then the game's start
 int nx2_load(void);                  // 0: done
+// A port built with sources of its user's (tools/build.py --also; nx2_hook.h is what they use): each one's function is called
+// once by nx2_load, the modules in memory and their relocations done, before any initializer of the game's runs.
+void nx2_hooks_install(void);
+void nx2_port_hooks(void) __attribute__((weak));  // (the first way: a single source that defines this by name)
 void *nx2_symbol(const char *name);  // a symbol some module defines, or null
 void nx2_start(u32 main_thread);     // doesn't return
 int nx2_where(u64 host, const char **module, u64 *offset);  // which module an address is in
@@ -105,6 +109,10 @@ void nx2_rom_open(void);
 int nx2_rom_ipc(u8 *message);  // a message to the file system service: 1 if answered here
 int nx2_aoc_ipc(u8 *message);  // a message to the add-on content service: 1 if answered here
 void nx2_save_open(void);      // the game's saved data: a folder of the card (<folder>/save)
+int nx2_has_sd_save_fs(void);
+u32 nx2_create_cache_storage(s32 index, s64 data_size, s64 journal_size);
+u32 nx2_extend_save_data(const void *uid, s64 data_size, s64 journal_size);
+u32 nx2_get_save_data_size(s64 *out_data, s64 *out_journal, const void *uid, u32 (*real)(s64 *, s64 *, const void *));
 int nx2_save_before(u8 *message, char (*paths)[0x301], u32 *handle);
 void nx2_save_after(u8 *message, int how);
 
