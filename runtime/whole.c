@@ -25,9 +25,75 @@
 #include <switch.h>
 
 #include "nx2.h"
+#define ZSTD_STATIC_LINKING_ONLY
+#include "zstd.h"
 void nx2_log(const char *fmt, ...);
 void nx2_log_flush(void);
 extern char nx2_svc_entry[];
+
+// The modules' packed images that are after the program in its own file (tools/relink.py, tools/build.py): the file is the one
+// the homebrew loader was asked to start, the first of the program's arguments; at its end, "NX2PACK1" and how many bytes the
+// images are, just before that.
+extern char **__system_argv;
+extern int __system_argc;
+extern const unsigned long long nx2_outside_size;
+static FILE *outside_file;
+static u64 outside_base;
+static int outside_open(void) {
+    if (outside_file) return 0;
+    const char *self = __system_argc > 0 && __system_argv ? __system_argv[0] : NULL;
+    FILE *f = self ? fopen(self, "rb") : NULL;
+    if (!f) {
+        nx2_log("[load] the program's own file (%s) can't be opened: the modules' packed images are in it\n", self ? self : "not named");
+        return -1;
+    }
+    u8 mark[16];
+    long size = -1;
+    if (fseek(f, 0, SEEK_END) == 0) size = ftell(f);
+    u64 said = 0;
+    if (size >= 16 && fseek(f, size - 16, SEEK_SET) == 0 && fread(mark, 1, 16, f) == 16 && !memcmp(mark, "NX2PACK1", 8))
+        memcpy(&said, mark + 8, 8);
+    if (said != nx2_outside_size || (u64)size < said + 16) {
+        nx2_log("[load] %s: the modules' packed images aren't at its end as this program was built with them (%u bytes, where %u "
+                "were put there): the file was changed, or isn't this program's\n", self, said, (u64)nx2_outside_size);
+        fclose(f);
+        return -1;
+    }
+    setvbuf(f, NULL, _IONBF, 0);  // (read in large pieces of its own below: no buffer of the library's in between)
+    outside_file = f, outside_base = (u64)size - 16 - said;
+    return 0;
+}
+
+// One packed image, read from the file and unpacked as it is read, straight into its place: no more memory than the decoder's own.
+static int outside_unpack(u8 *to, u64 to_size, u64 at, u64 size) {
+    if (outside_open()) return -1;
+    ZSTD_DCtx *z = ZSTD_createDCtx();
+    const u64 piece = 256 << 10;
+    u8 *in = malloc(piece);
+    int ok = z && in && fseek(outside_file, (long)(outside_base + at), SEEK_SET) == 0;
+    if (ok) ZSTD_DCtx_setParameter(z, ZSTD_d_stableOutBuffer, 1);  // (the whole image's place is given at once: no window of its own)
+    ZSTD_outBuffer out = {to, to_size, 0};
+    size_t left = 1;
+    for (u64 done = 0; ok && done < size;) {
+        const u64 n = size - done < piece ? size - done : piece;
+        if (fread(in, 1, n, outside_file) != n) {
+            ok = 0;
+            break;
+        }
+        ZSTD_inBuffer i = {in, n, 0};
+        while (ok && i.pos < i.size) {
+            left = ZSTD_decompressStream(z, &out, &i);
+            if (ZSTD_isError(left)) {
+                nx2_log("[load] a packed image can't be unpacked: %s\n", ZSTD_getErrorName(left));
+                ok = 0;
+            }
+        }
+        done += n;
+    }
+    free(in);
+    ZSTD_freeDCtx(z);
+    return ok && left == 0 && out.pos == to_size ? 0 : -1;
+}
 
 int nx2_map_modules(void) {
     const u64 page = 0x1000, shift = page;
@@ -57,12 +123,32 @@ int nx2_map_modules(void) {
             return -1;
         }
         memset(nro, 0, shift);
-        memcpy(nro + shift, im->image, im->image_size);
+        // (An image kept packed in the program, tools/relink.py: unpacked straight into the memory the loader service maps. Kept
+        // as it is, each module was in memory twice, in the program and in this copy: some 95 MB of a game's, which the game then
+        // didn't have; a game at the end of its memory stopped as it loaded a saved game. 2026-11-27.)
+        if (im->outside) {
+            if (outside_unpack(nro + shift, im->image_size, im->packed_at, im->packed_size)) {
+                nx2_log("[load] %s: its image, kept packed after the program in its file, can't be read and unpacked\n", m->name);
+                nx2_log_flush();
+                return -1;
+            }
+            nx2_log("[load] %s: unpacked from %u KB read from the program's file to %u KB\n", m->name, im->packed_size >> 10, im->image_size >> 10);
+        } else if (im->packed_size) {
+            const size_t got = ZSTD_decompress(nro + shift, im->image_size, im->image, im->packed_size);
+            if (ZSTD_isError(got) || got != im->image_size) {
+                nx2_log("[load] %s: its image, kept packed, can't be unpacked (%s)\n", m->name, ZSTD_isError(got) ? ZSTD_getErrorName(got) : "short");
+                nx2_log_flush();
+                return -1;
+            }
+            nx2_log("[load] %s: unpacked from %u KB in the program to %u KB\n", m->name, im->packed_size >> 10, im->image_size >> 10);
+        } else {
+            memcpy(nro + shift, im->image, im->image_size);
+        }
         memset(nro + shift + im->image_size, 0, rw_end - im->image_size);
         memset(bss, 0, bss_size);
         // the first page: what the SDK reads to find the module's headers, the NRO's header, the thunks
         u32 *w = (u32 *)nro;
-        const u32 *first = (const u32 *)im->image;
+        const u32 *first = (const u32 *)(nro + shift);  // (the image as it is now: unpacked, if it was kept packed)
         w[0] = first[0];
         w[1] = (u32)(shift + first[1]);  // (the module's header, MOD0)
         w[2] = first[2] ? (u32)(shift + first[2]) : 0;  // (a later SDK's second header)
@@ -175,6 +261,7 @@ int nx2_map_modules(void) {
             nx2_log_flush();
         }
     }
+    if (outside_file) fclose(outside_file), outside_file = NULL;
     return 0;
 }
 #else

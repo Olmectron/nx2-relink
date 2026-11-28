@@ -198,10 +198,20 @@ def build(exefs, name, target, work, out_dir, shown=None):
     whole = WHOLE[:1] or ([info['whole']] if info.get('whole') else ['--whole=auto'] if info.get('switch2') else [])
     print(run([sys.executable, f'{ROOT}/tools/relink.py', gen] + whole + [f'{n}={p}' for n, p in mods]), end='')
     cflags, ldflags = target_flags(target)
+    if info.get('switch2'):
+        # (A Switch 2 game draws with its own SDK: the host's OpenGL and Vulkan, which the runtime then never calls (gl2.c), are
+        # left out by the linker, with whatever else nothing calls: some 27 MB of the program that are the game's instead.)
+        # (each variable in a section of its own as well: a file's memory that only the host's graphics used goes with them)
+        ldflags = ldflags + ['-Wl,--gc-sections']
+        extra = extra + ['-fdata-sections']
     obj = f'{work}/obj_{target}'
     os.makedirs(obj, exist_ok=True)
     objs = []
     sources = sorted(glob.glob(f'{ROOT}/runtime/*.c') + glob.glob(f'{ROOT}/runtime/*.s')) + [f'{gen}/modules.c'] + [f'{gen}/{n}.s' for n, _ in mods] + also
+    # (Zstandard's decoder, for the modules kept whole, which tools/relink.py keeps packed: built as its makers wrote it, with nothing
+    # of its own switched on but what a decoder needs)
+    zstd = f'{ROOT}/third_party/zstd'
+    zstd_sources = sorted(glob.glob(f'{zstd}/common/*.c') + glob.glob(f'{zstd}/decompress/*.c')) if target == 'switch2' else []
     progress('relink', target, 1, 1)
     for k, s in enumerate(sources):
         progress('compile', target, k, len(sources))
@@ -209,7 +219,13 @@ def build(exefs, name, target, work, out_dir, shown=None):
         # (a source of the user's own has its place in the name: two of them may be called the same)
         o = f'{obj}/{f"also{also.index(s)}_" if s in also else ""}{os.path.basename(s)}.o'
         # (the modules' .s files name their .bin files by name alone: assembled from the folder they are in)
-        run([GCC, '-c', '-O2', '-g', '-Wall', '-ffunction-sections', *ARCH, *cflags, *extra, f'-DNX2_NAME="{name}"', f'-DNX2_VERSION="{VERSION}"', f'-I{ROOT}/runtime', s, '-o', o], cwd=gen)
+        run([GCC, '-c', '-O2', '-g', '-Wall', '-ffunction-sections', *ARCH, *cflags, *extra, f'-DNX2_NAME="{name}"', f'-DNX2_VERSION="{VERSION}"', f'-I{ROOT}/runtime', f'-I{ROOT}/third_party/zstd', s, '-o', o], cwd=gen)
+        objs.append(o)
+    for s in zstd_sources:
+        s = s.replace('\\', '/')
+        o = f'{obj}/zstd_{os.path.basename(s)}.o'
+        run([GCC, '-c', '-O2', '-ffunction-sections', *ARCH, *cflags, '-DZSTD_DISABLE_ASM', '-DZSTD_LEGACY_SUPPORT=0', '-DDEBUGLEVEL=0', '-DZSTD_NO_TRACE',
+             f'-I{zstd}', s, '-o', o])
         objs.append(o)
     progress('compile', target, len(sources), len(sources))
     progress('link', target, 0, 1)
@@ -231,6 +247,13 @@ def build(exefs, name, target, work, out_dir, shown=None):
     run([f'{DKP}/tools/bin/nacptool', '--create', title, author, shown.get('version') or '0.1', nacp])
     icon = shown.get('icon')
     run([f'{DKP}/tools/bin/elf2nro', elf, nro, f'--nacp={nacp}'] + ([f'--icon={icon}'] if icon and os.path.isfile(icon) else []))
+    # (the modules' packed images, tools/relink.py, after all of the program's file, and a mark after them that says how many
+    # bytes they are: the homebrew loader reads the program alone into memory, and the runtime reads these from the card, whole.c)
+    outside = f'{gen}/packed.bin'
+    if os.path.isfile(outside) and os.path.getsize(outside):
+        with open(nro, 'ab') as f:
+            f.write(open(outside, 'rb').read())
+            f.write(b'NX2PACK1' + os.path.getsize(outside).to_bytes(8, 'little'))
     progress('link', target, 1, 1)
     print(f'{nro}: {os.path.getsize(nro) >> 10} KB ({target}); "{title}" {shown.get("version") or ""}{", with its icon" if icon else ""}; '
           f'symbols in {elf}' + (f'; with {len(also)} source(s) of your own built in: {", ".join(os.path.basename(a) for a in also)}' if also else ''))

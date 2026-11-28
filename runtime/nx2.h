@@ -47,6 +47,9 @@ typedef struct {
     u64 image_size, text_size, ro_off, ro_size;
     const u32 *svcs;
     u32 nsvcs;
+    u64 packed_size;  // (not 0: the image is kept as one Zstandard frame of this many bytes, unpacked once as it is mapped)
+    u64 packed_at;    // (and with `outside`, that frame is this far into what follows the program in its own file, not in the program)
+    u32 outside;
 } Nx2Image;
 extern const Nx2Image nx2_images[];
 extern const int nx2_whole;  // 1: the modules are kept whole, and text and data above are set when they are mapped

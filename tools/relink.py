@@ -128,7 +128,25 @@ def whole(name, nso, out):
     text_len = len(nso.text)
     words = struct.unpack_from(f'<{text_len // 4}I', img, 0)
     svcs = [(i * 4, w >> 5 & 0xFFFF) for i, w in enumerate(words) if w & 0xFFE0001F == 0xD4000001]
-    open(f'{out}/{name}_img.bin', 'wb').write(img)
+    # (kept packed, one Zstandard frame: the runtime unpacks it once, into the memory the loader service maps, whole.c. As it was,
+    # the program held each image and the runtime a copy of it: a game's modules twice, some 95 MB that the game then lacked.
+    # NX2_RAW_MODULES=1 in the environment keeps them as they are.)
+    # (And the packed frames are not in the program either, but after it in its file, packed.bin, which tools/build.py puts there:
+    # the homebrew loader reads into memory the program alone, as its header gives its size, and the frames are read from the card
+    # as the modules are mapped. In the program they were some 28 MB that stayed in memory, of no use once unpacked. 2026-11-27.
+    # NX2_PACKED_INSIDE=1 keeps them in the program.)
+    packed = 0
+    data = img
+    if not os.environ.get('NX2_RAW_MODULES'):
+        import zstandard
+        data = zstandard.ZstdCompressor(level=19, threads=-1, write_checksum=True).compress(img)
+        packed = len(data)
+    at = -1
+    if packed and not os.environ.get('NX2_PACKED_INSIDE'):
+        at = sum(len(b) for b in OUTSIDE)
+        OUTSIDE.append(data)
+        data = b'\0' * 8  # (the image's symbol stays, a mark that the module is kept whole)
+    open(f'{out}/{name}_img.bin', 'wb').write(data)
     open(f'{out}/{name}.s', 'w', newline='\n').write(f'''// {name}: made by tools/relink.py --whole from {os.path.basename(nso.path)}. Not to be edited.
     .section .rodata.g_{name}, "a", %progbits
     .balign {PAGE:#x}
@@ -136,9 +154,12 @@ def whole(name, nso, out):
 g_{name}_image:
     .incbin "{name}_img.bin"
 ''')
-    print(f'{name}: kept whole, {len(img):#x} bytes (code {text_len:#x}, read-only data from {nso.ro_off:#x}, data from {nso.data_off:#x}, '
-          f'ends at {end:#x}); {len(svcs)} system calls ({", ".join(f"{k:02x}" for k in sorted(set(n for _, n in svcs)))})')
-    return end, svcs
+    print(f'{name}: kept whole, {len(img):#x} bytes{f", {packed >> 10} KB packed" if packed else ""}{" (after the program in its file)" if at >= 0 else ""} (code {text_len:#x}, read-only data from {nso.ro_off:#x}, '
+          f'data from {nso.data_off:#x}, ends at {end:#x}); {len(svcs)} system calls ({", ".join(f"{k:02x}" for k in sorted(set(n for _, n in svcs)))})')
+    return end, svcs, packed, at
+
+
+OUTSIDE = []  # (the packed images that go after the program in its file, in order: packed.bin)
 
 
 def has_own_tls(nso):
@@ -199,10 +220,10 @@ def main():
         name, path = arg.split('=', 1)
         nso = Nso(path)
         if choice and (named is None or name in named):
-            end, svcs = whole(name, nso, out)
+            end, svcs, packed, at = whole(name, nso, out)
             externs.append(f'extern const unsigned char g_{name}_image[];')
             tables.append(f'static const u32 svcs_{name}[] = {{{", ".join(f"{a:#x}, {n:#x}" for a, n in svcs) or "0"}}};')
-            images.append(f'    {{g_{name}_image, {nso.data_off + len(nso.data):#x}, {len(nso.text):#x}, {nso.ro_off:#x}, {len(nso.ro):#x}, svcs_{name}, {len(svcs)}}},')
+            images.append(f'    {{g_{name}_image, {nso.data_off + len(nso.data):#x}, {len(nso.text):#x}, {nso.ro_off:#x}, {len(nso.ro):#x}, svcs_{name}, {len(svcs)}, {packed:#x}, {max(at, 0):#x}, {int(at >= 0)}}},')
             text, data = '0', '0'
         else:
             end = relink(name, nso, out)
@@ -227,7 +248,11 @@ const Nx2Image nx2_images[] = {{
 {nl.join(images)}
 }};
 const int nx2_whole = {sum(1 for i in images if i.strip() != '{0},')};
+// (how many bytes of packed images follow the program in its file: tools/build.py puts them there, packed.bin, then a mark)
+const unsigned long long nx2_outside_size = {sum(len(b) for b in OUTSIDE):#x};
 ''')
+    # (written every time, empty if there are none: tools/build.py puts it after the program as it is)
+    open(f'{out}/packed.bin', 'wb').write(b''.join(OUTSIDE))
 
 
 if __name__ == '__main__':

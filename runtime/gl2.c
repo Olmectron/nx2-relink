@@ -859,6 +859,10 @@ void *nx2_override(const char *name) {
 #endif
         return nx2_audio_override(name);
     }
+#ifndef NX2_GAME_MB
+    // (Built for a Switch 2 game, the port never gets here: what follows, the host's own graphics in the game's place, is left out
+    // of it, and with it the host's OpenGL and Vulkan, which no part of it then calls: some 27 MB of the program, code and
+    // memory, that are the game's instead. tools/build.py links such a port with --gc-sections. 2026-11-27.)
     static const struct {
         const char *name;
         void *fn;
@@ -925,5 +929,8 @@ void *nx2_override(const char *name) {
     }
     void *nvn = nx2_nvn_override(name);
     return nvn ? nvn : nx2_audio_override(name);
+#else
+    return NULL;
+#endif
 }
 #endif

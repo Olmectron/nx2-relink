@@ -223,12 +223,16 @@ A port is two things on the SD card: its program, **`/switch/nx2-relink/<name>.n
 | `log.txt`, `log.prev.txt` | The log of the last run, and of the one before |
 | `debug` | If this file exists (empty will do), the log is the detailed one |
 | `nvnnative` | If this file exists, the game's graphics driver is left unwatched: something to try for a game that doesn't start. The log then has no line of how fast the game runs |
+| `saveslots` | Optional: which save folders the game sees, by name (`slot_01`, several on separate lines) or how many (`2`). The others are moved, not deleted, to `save.archive/`, and a name brings its folder back from there |
 | **`mods/`** | **Optional: files of yours that the game gets in place of its own (below)** |
 
 **Saved data.** A port keeps its saves in `/nx2-relink/<name>/save/`, as loose files, exactly as the game writes them.
 They are **apart from the console's own save data**: a port doesn't read or touch the saves of the installed game, and the
 installed game doesn't see the port's. To back a port's saves up, copy that folder; to start over, delete it. Deleting a port's
 folder deletes its saves with it.
+
+The port's `.nro` keeps the game's code packed at its end and reads it from there as it starts: copy the file whole, and keep it
+where you start it from.
 
 Building a port again doesn't touch any of this: install it with `--nro-only` (or "Copy only the program" in the window) and
 only the `.nro` is replaced.

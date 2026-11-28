@@ -9,6 +9,7 @@
 // JPEG) and go back to where it was started from. tools/control.py fetches the file and the port is built again with what it says.
 // It only reads: nothing of the console's is changed.
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <switch.h>
 
@@ -34,28 +35,36 @@ void nx2_control_look(void) {
         return;
     }
     // (room for more than a Switch's: with that much, 0x24000 bytes, a Switch 2 said 5010 for a game it has, 2026-11-25)
-    static union {
+    // (asked of the heap for this run alone: as part of the program it was 4 MB that every run of the port kept from the game)
+    typedef union {
         NsApplicationControlData d;
         u8 room[0x4000 + (4u << 20)];
-    } all;
-#define data all.d
+    } Room;
+    Room *all = aligned_alloc(0x1000, sizeof(Room));
+    if (!all) {
+        nsExit();
+        nx2_log("[control] no memory for the console's answer\n");
+        nx2_log_flush();
+        return;
+    }
+#define data all->d
     u64 size = 0;
     u32 unknown = 0;
     // (the newer request first, and of it the Switch 2 edition's data before the plain: a Switch 2 game's is that one)
-    rc = nsGetApplicationControlData2(NsApplicationControlSource_Storage, id, &data, sizeof all, 0, 1, &size, &unknown);
+    rc = nsGetApplicationControlData2(NsApplicationControlSource_Storage, id, &data, sizeof(Room), 0, 1, &size, &unknown);
     nx2_log("[control] the newer request, the Switch 2 edition's data: %x, %u bytes\n", (u64)rc, size);
     if (R_FAILED(rc) || size <= sizeof data.nacp) {
         size = 0;
-        rc = nsGetApplicationControlData2(NsApplicationControlSource_Storage, id, &data, sizeof all, 0, 0, &size, &unknown);
+        rc = nsGetApplicationControlData2(NsApplicationControlSource_Storage, id, &data, sizeof(Room), 0, 0, &size, &unknown);
         nx2_log("[control] the newer request, the plain data: %x, %u bytes\n", (u64)rc, size);
     }
     if (R_FAILED(rc) || size <= sizeof data.nacp) {
         size = 0;
-        rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, id, &data, sizeof all, &size);
+        rc = nsGetApplicationControlData(NsApplicationControlSource_Storage, id, &data, sizeof(Room), &size);
         nx2_log("[control] the older request: %x, %u bytes\n", (u64)rc, size);
     }
     nsExit();
-    if (R_SUCCEEDED(rc) && size >= sizeof data.nacp && size <= sizeof all) {
+    if (R_SUCCEEDED(rc) && size >= sizeof data.nacp && size <= sizeof(Room)) {
         char name[64];
         snprintf(name, sizeof name, NX2_F("control-%016llx.bin"), (unsigned long long)id);
         f = fopen(name, "wb");
@@ -67,5 +76,6 @@ void nx2_control_look(void) {
     } else {
         nx2_log("[control] the console gave nothing for that number: is the game on this console?\n");
     }
+    free(all);
     nx2_log_flush();
 }

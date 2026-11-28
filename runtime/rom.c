@@ -920,6 +920,123 @@ static int is_ro_fs_cmd(u32 cmd, const u8 *d, const u8 *end) {
     return 0;
 }
 
+// <folder>/saveslots: which of the saved data's folders the game is to see: their names (one or more, as "slot_01"), or how many.
+// Named: those are the ones in the save folder, brought back from the archive if they are there, and the others go to it.
+// A number: A game that lists every slot it has as it shows
+// its Load screen keeps something of each in memory, and one with many could then lack the memory to load one of them (six
+// slots of a game, late in it: a black screen, the game waiting for memory it never got; with one or two, it loaded.
+// 2026-11-27). The folders changed most lately stay; the others are moved, whole, to <folder>/save.archive/, before the game
+// starts: nothing is deleted, and the game, not seeing them, can't write over them. A folder moved back is seen again.
+static u64 newest_in(FsFileSystem *sd, const char *dir) {
+    FsDir d;
+    if (R_FAILED(fsFsOpenDirectory(sd, dir, FsDirOpenMode_ReadFiles, &d))) return 0;
+    static FsDirectoryEntry e[16];
+    s64 n = 0;
+    u64 newest = 0;
+    while (R_SUCCEEDED(fsDirRead(&d, &n, 16, e)) && n > 0)
+        for (s64 k = 0; k < n; k++) {
+            char path[FS_MAX_PATH];
+            snprintf(path, sizeof path, "%s/%s", dir, e[k].name);
+            FsTimeStampRaw t;
+            if (R_SUCCEEDED(fsFsGetFileTimeStampRaw(sd, path, &t)) && t.is_valid && t.modified > newest) newest = t.modified;
+        }
+    fsDirClose(&d);
+    return newest;
+}
+static void save_slots(FsFileSystem *sd) {
+    FILE *f = fopen(NX2_F("saveslots"), "r");
+    if (!f) return;
+    static char wanted[8][64];
+    int named = 0, keep = 0;
+    char word[64];
+    while (named < 8 && fscanf(f, "%63s", word) == 1) {
+        if (!named && word[0] >= '0' && word[0] <= '9') {
+            keep = atoi(word);
+            break;
+        }
+        int plain = word[0] && !strstr(word, "..");
+        for (const char *c = word; *c; c++) plain = plain && *c != '/' && *c != '\\' && *c != ':';
+        if (plain) strcpy(wanted[named++], word);
+    }
+    fclose(f);
+    static char archive[FS_MAX_PATH];
+    snprintf(archive, sizeof archive, "%s.archive", SAVE_DIR);
+    if (named) {
+        // (the ones named: brought back from the archive where they are there and not in the save folder)
+        fsFsCreateDirectory(sd, archive);
+        for (int k = 0; k < named; k++) {
+            char from[FS_MAX_PATH], to[FS_MAX_PATH];
+            FsDirEntryType type;
+            snprintf(to, sizeof to, "%s/%s", SAVE_DIR, wanted[k]);
+            snprintf(from, sizeof from, "%s/%s", archive, wanted[k]);
+            if (R_FAILED(fsFsGetEntryType(sd, to, &type)) && R_SUCCEEDED(fsFsGetEntryType(sd, from, &type))) {
+                const Result rc = fsFsRenameDirectory(sd, from, to);
+                nx2_log("[save] <folder>/saveslots: %s brought back from the archive: %x\n", wanted[k], (u64)rc);
+            }
+        }
+    }
+    if (!named && (keep < 1 || keep > 64)) {
+        nx2_log("[save] <folder>/saveslots: a number from 1 to 64, how many of the saved data's folders the game sees; nothing moved\n");
+        return;
+    }
+    static struct {
+        char name[0x301];
+        u64 when;
+    } folders[64];
+    int count = 0;
+    static char dir[FS_MAX_PATH];
+    strncpy(dir, SAVE_DIR, sizeof dir - 1);
+    FsDir d;
+    if (R_FAILED(fsFsOpenDirectory(sd, dir, FsDirOpenMode_ReadDirs, &d))) return;
+    static FsDirectoryEntry e[16];
+    s64 n = 0;
+    while (count < 64 && R_SUCCEEDED(fsDirRead(&d, &n, 16, e)) && n > 0)
+        for (s64 k = 0; k < n && count < 64; k++) strncpy(folders[count++].name, e[k].name, sizeof folders[0].name - 1);
+    fsDirClose(&d);
+    if (named) {
+        // (the ones named first, the rest after them: all but the first `keep` go)
+        keep = 0;
+        for (int k = 0; k < count; k++)
+            for (int w = 0; w < named; w++)
+                if (!strcmp(folders[k].name, wanted[w])) folders[k].when = ~0ull, keep++;
+    }
+    if (count <= keep) {
+        nx2_log("[save] <folder>/saveslots: %u folders of saved data, %u kept: nothing moved\n", (u64)count, (u64)keep);
+        return;
+    }
+    for (int k = 0; k < count && !named; k++) {
+        char path[FS_MAX_PATH];
+        snprintf(path, sizeof path, "%s/%s", dir, folders[k].name);
+        folders[k].when = newest_in(sd, path);
+        nx2_log("[save] <folder>/saveslots: %s last changed at %u%s\n", folders[k].name, folders[k].when,
+                folders[k].when ? "" : " (the card has no time for it: the order the folder lists them in is kept)");
+    }
+    // (the newest first: a plain sort of a few dozen)
+    for (int a = 1; a < count; a++)
+        for (int b = a; b > 0 && folders[b].when > folders[b - 1].when; b--) {
+            char name[0x301];
+            const u64 when = folders[b].when;
+            memcpy(name, folders[b].name, sizeof name), memcpy(folders[b].name, folders[b - 1].name, sizeof name);
+            memcpy(folders[b - 1].name, name, sizeof name);
+            folders[b].when = folders[b - 1].when, folders[b - 1].when = when;
+        }
+    fsFsCreateDirectory(sd, archive);
+    int moved = 0;
+    for (int k = keep; k < count; k++) {
+        char from[FS_MAX_PATH], to[FS_MAX_PATH];
+        snprintf(from, sizeof from, "%s/%s", dir, folders[k].name);
+        snprintf(to, sizeof to, "%s/%s", archive, folders[k].name);
+        FsDirEntryType type;
+        for (int again = 2; R_SUCCEEDED(fsFsGetEntryType(sd, to, &type)) && again < 100; again++)  // (one of that name archived already)
+            snprintf(to, sizeof to, "%s/%s.%d", archive, folders[k].name, again);
+        const Result rc = fsFsRenameDirectory(sd, from, to);
+        nx2_log("[save] <folder>/saveslots: %s moved to %s: %x\n", from, to, (u64)rc);
+        moved += R_SUCCEEDED(rc);
+    }
+    nx2_log("[save] <folder>/saveslots: of %u folders of saved data, %u are the game's (%s); %u moved to sdmc:%s\n", (u64)count, (u64)keep,
+            named ? "the ones named" : "the ones changed most lately", (u64)moved, archive);
+}
+
 void nx2_save_open(void) {
     svcGetInfo(&host_title_id, InfoType_ProgramId, CUR_PROCESS_HANDLE, 0);
     FsFileSystem *sd = fsdevGetDeviceFileSystem("sdmc");
@@ -929,6 +1046,7 @@ void nx2_save_open(void) {
     fsFsCreateDirectory(sd, up);
     const u32 rc = fsFsCreateDirectory(sd, dir);
     nx2_log("[save] the game's saved data is kept in sdmc:%s (made: %x)\n", dir, (u64)rc);
+    save_slots(sd);
 #ifdef __SWITCH2__
     if (sd->s.object_id) host_fs = sd;
     nx2_log("[save] the host's file system of the card: session %x, object %x: %s\n", (u64)sd->s.session, (u64)sd->s.object_id,
